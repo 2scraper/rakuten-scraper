@@ -3111,6 +3111,127 @@ def test_log_format_strings_match_their_args():
     return ok
 
 
+def test_every_shared_call_binds():
+    group("every call into a shared module binds, including the paths a "
+          "credential gates")
+    ok = True
+    # §17's check #1, widened to the case that matters most here: the
+    # credential-gated modules. `fingerprint_client`, `scraper_api_client`
+    # and `captcha_solver` are reached only with a 2Captcha key, and no key
+    # was available to the work that built this repo — so a wrong call in
+    # them would be invisible to every live run AND to the narrower
+    # page_flow-only version of this check. On a sibling repo, a key
+    # arriving later surfaced FIVE calls to functions that never existed.
+    #
+    # This binds FROM-IMPORTED names too, not just `module.attr()` calls,
+    # because that is how these modules are actually used
+    # (`from fingerprint_client import get_fingerprint`).
+    import importlib
+    import inspect as _inspect
+
+    SHARED = ("product_parser", "page_flow", "output_writer", "proxy_pool",
+              "captcha_solver", "fingerprint_client", "scraper_api_client",
+              "env_config", "diff_runs")
+    CALLERS = ("playwright_scraper", "puppeteer_scraper", "selenium_scraper",
+               "scraper_api_client", "fingerprint_client", "diff_runs",
+               "page_flow", "product_parser")
+
+    # name -> the callable it was imported from, per calling module.
+    checked = 0
+    for caller in CALLERS:
+        path = os.path.join(REPO_ROOT, caller + ".py")
+        if not os.path.exists(path):
+            continue
+        src = open(path, encoding="utf-8").read()
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            ok &= check("%s parses" % caller, False)
+            continue
+        # Build the from-import map, and note every name BOUND locally —
+        # a parameter, an assignment or a local def shadows the import, and
+        # binding against the shared module's signature would then be wrong.
+        imported = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in SHARED:
+                for alias in node.names:
+                    imported[alias.asname or alias.name] = (node.module,
+                                                            alias.name)
+        shadowed = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                shadowed.add(node.name)
+                for a in node.args.args + node.args.kwonlyargs:
+                    shadowed.add(a.arg)
+                if node.args.vararg:
+                    shadowed.add(node.args.vararg.arg)
+                if node.args.kwarg:
+                    shadowed.add(node.args.kwarg.arg)
+            elif isinstance(node, ast.ClassDef):
+                shadowed.add(node.name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.For)):
+                targets = (node.targets if isinstance(node, ast.Assign)
+                           else [node.target])
+                for t in targets:
+                    for sub in ast.walk(t):
+                        if isinstance(sub, ast.Name):
+                            shadowed.add(sub.id)
+        bad = []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)):
+                continue
+            local = node.func.id
+            if local not in imported or local in shadowed:
+                continue
+            module_name, real = imported[local]
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                continue
+            target = getattr(module, real, None)
+            # A name the module does NOT define is the loudest thing this
+            # check can say, so it must not be skipped — a sibling repo
+            # resolved with getattr(..., None), skipped anything
+            # not-callable, and stayed silent on exactly that case (§22).
+            if target is None:
+                bad.append("%s:%d %s.%s does not exist"
+                           % (caller, node.lineno, module_name, real))
+                continue
+            if not callable(target):
+                continue
+            # A star-arg or **kwargs in the CALL makes the binding
+            # unknowable, so it is skipped rather than guessed at.
+            if (any(isinstance(a, ast.Starred) for a in node.args)
+                    or any(k.arg is None for k in node.keywords)):
+                continue
+            try:
+                sig = _inspect.signature(target)
+            except (TypeError, ValueError):
+                continue
+            try:
+                sig.bind(*[object()] * len(node.args),
+                         **{k.arg: object() for k in node.keywords})
+            except TypeError as exc:
+                bad.append("%s:%d %s(...) — %s"
+                           % (caller, node.lineno, local, exc))
+            checked += 1
+        ok &= check("every from-imported shared call in %s binds" % caller,
+                    not bad)
+        for line in bad:
+            print("        %s" % line)
+    # A binding check that bound NOTHING passes for the wrong reason.
+    ok &= check("the check actually bound something (%d call(s))" % checked,
+                checked >= 40)
+    # And the credential-gated modules specifically must be among the
+    # callers examined, because they are the ones no run reaches.
+    ok &= check("the credential-gated modules were examined",
+                all(os.path.exists(os.path.join(REPO_ROOT, m + ".py"))
+                    for m in ("fingerprint_client", "scraper_api_client",
+                              "captcha_solver")))
+    return ok
+
+
 def test_sponsored_slots_do_not_shift_position():
     group("Rakuten injects paid slots into its own result list")
     ok = True
@@ -3314,6 +3435,7 @@ def main() -> int:
     ok &= test_sample_output()
     ok &= test_public_names_have_consumers()
     ok &= test_log_format_strings_match_their_args()
+    ok &= test_every_shared_call_binds()
 
     print()
     if _failures:
