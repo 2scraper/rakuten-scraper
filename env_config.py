@@ -61,7 +61,7 @@ _PLACEHOLDERS = {
 # This repo's `.env.example` documents the two credentialled URLs the way the
 # vendor documents them, with the parts you fill in written in braces:
 #
-#     ws://{login}-zone-scraping_browser-country-id-pid-{profileId}:{password}@cb.2captcha.com:9222
+#     ws://{login}-zone-scraping_browser-country-jp-pid-{profileId}:{password}@cb.2captcha.com:9222
 #     http://{user}:{password}@ap.proxy.2captcha.com:2334
 #
 # A literal-only check reported both of those as CONFIGURED, so `cp

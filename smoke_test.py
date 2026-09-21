@@ -2762,8 +2762,155 @@ def test_engines(skips):
             # --lang plus intl.accept_languages.
             uses = [ln for ln in esrc.split("\n")
                     if "args.locale" in ln and "add_argument" not in ln]
+            # THE REMOTE FLAG MUST GATE THE IDENTITY, in both directions.
+            # A sibling repo minted a session cookie over HTTP and installed
+            # it into a --cdp-endpoint browser, so it was issued on one
+            # continent and replayed from another. This repo cannot do that
+            # — its engines never fetch the site over HTTP at all — but the
+            # same class of mistake is live here as a fingerprint: stacking
+            # a second identity onto a managed browser that already has one
+            # is the thing measured to get a client refused on this site.
+            #
+            # Two of the three engines were correct only by accident of
+            # code structure: the remote branch returns before the
+            # fingerprint is applied, so the flag stayed True while the log
+            # said "ignored". Asserted as an enforced gate now.
+            ok &= check("%s FORCES --fingerprint off with --cdp-endpoint "
+                        "rather than only warning" % eng,
+                        "args.fingerprint = False" in esrc)
+            ok &= check("%s says why, rather than silently dropping it"
+                        % eng,
+                        re.search(r"--fingerprint is ignored with "
+                                  r"--cdp-endpoint", esrc) is not None)
+            # ...and does NOT disable it on the ordinary path, or the flag
+            # would be dead everywhere.
+            forced = [ln for ln in esrc.split("\n")
+                      if "args.fingerprint = False" in ln]
+            ok &= check("%s forces it off in exactly one place" % eng,
+                        len(forced) == 1)
+            # THE BEHAVIOUR, not a comment saying so — §20's rule that an
+            # assertion which is a proxy for behaviour goes stale. Forcing
+            # `args.fingerprint = False` only gates the identity if EVERY
+            # path that applies one is itself behind that flag.
+            #
+            # Followed through ONE level of indirection, because two of the
+            # three engines put the work in an `_apply_fingerprint` method
+            # and guard its CALL SITE. A version of this check that looked
+            # only for calls lexically inside an `if ... fingerprint` block
+            # reported those two as ungated, which was the check being wrong
+            # rather than the code (§22: ask what a check does when its
+            # resolution fails).
+            etree = ast.parse(esrc)
+            applies = ("get_fingerprint", "_apply_fingerprint",
+                       "playwright_init_script", "playwright_context_kwargs")
+
+            def _calls_in(node):
+                return [ast.unparse(n.func) for n in ast.walk(node)
+                        if isinstance(n, ast.Call)]
+
+            # Helpers whose whole job is applying a fingerprint: a call
+            # inside one of these is gated iff every call TO it is gated.
+            helpers = {n.name for n in ast.walk(etree)
+                       if isinstance(n, ast.FunctionDef)
+                       and "fingerprint" in n.name.lower()}
+            gated_lines = set()
+            for node in ast.walk(etree):
+                if (isinstance(node, ast.If)
+                        and "fingerprint" in ast.unparse(node.test)):
+                    for sub in ast.walk(node):
+                        if isinstance(sub, ast.Call):
+                            gated_lines.add(sub.lineno)
+            # Every call to a helper must be gated...
+            helper_calls = [n for n in ast.walk(etree)
+                            if isinstance(n, ast.Call)
+                            and any(h in ast.unparse(n.func)
+                                    for h in helpers)]
+            ungated_helpers = [ast.unparse(n.func) for n in helper_calls
+                               if n.lineno not in gated_lines]
+            # ...and every direct application outside a helper must be too.
+            in_helper = set()
+            for n in ast.walk(etree):
+                if isinstance(n, ast.FunctionDef) and n.name in helpers:
+                    for sub in ast.walk(n):
+                        if isinstance(sub, ast.Call):
+                            in_helper.add(sub.lineno)
+            direct = [n for n in ast.walk(etree)
+                      if isinstance(n, ast.Call)
+                      and any(a in ast.unparse(n.func) for a in applies)
+                      and not any(h in ast.unparse(n.func) for h in helpers)]
+            ungated_direct = [ast.unparse(n.func) for n in direct
+                              if n.lineno not in gated_lines
+                              and n.lineno not in in_helper]
+            ungated = ungated_helpers + ungated_direct
+            ok &= check("%s applies a fingerprint ONLY behind the flag, so "
+                        "forcing it off really gates it%s"
+                        % (eng, (" (ungated: %s)" % ungated) if ungated
+                           else ""),
+                        bool(direct or helper_calls) and not ungated)
             ok &= check("%s does not merely declare --locale, it applies it"
                         % eng, len(uses) >= 1)
+
+    # THE THREE ENGINES MUST WRITE THE SAME SIDECAR, and this is a check
+    # written because an audit caught them not doing it. Two of the three
+    # still assembled a sibling's `extra` keys — `scroll`, `result_header`,
+    # `pages_still_growing` — so a Selenium run's sidecar was MISSING the
+    # cap arithmetic, which on this site is the figure that keeps
+    # `status: complete` honest: the site serves 6,750 of 3,000,000 matches,
+    # and a sidecar that says only "complete" is lying by omission (§21).
+    #
+    # Compared as the SET OF KEYS each engine builds, read off the source,
+    # because the alternative is three live runs and a diff — which is how
+    # it was actually found, and is too slow to keep.
+    extra_keys = {}
+    for eng in _ENGINE_MODULES:
+        path = os.path.join(REPO_ROOT, eng + ".py")
+        if not os.path.exists(path):
+            continue
+        esrc = open(path, encoding="utf-8").read()
+        # The `extra` assembly, read off the source between `extra = None`
+        # and the `finish_run` call. Line-based rather than one multi-line
+        # regex, which is easier to read and does not depend on how the
+        # block happens to be formatted.
+        lines = esrc.split("\n")
+        try:
+            first = next(i for i, ln in enumerate(lines)
+                         if ln.strip() == "extra = None")
+        except StopIteration:
+            first = None
+        keys = set()
+        if first is not None:
+            for ln in lines[first:first + 40]:
+                if "return finish_run" in ln:
+                    break
+                keys |= set(re.findall(r'extra\[["\']([a-z_]+)["\']\]', ln))
+                keys |= set(re.findall(r'extra = \{"([a-z_]+)"', ln))
+        extra_keys[eng] = keys
+        ok &= check("%s assembles a sidecar `extra`" % eng, bool(keys))
+        # The stale keys must be gone, by name: `scroll` is meaningless on a
+        # site that serves its whole page at once.
+        ok &= check("%s carries no sibling's sidecar keys" % eng,
+                    not ({"scroll", "result_header", "pages_still_growing"}
+                         & keys))
+    if len(extra_keys) == 3:
+        sets = list(extra_keys.values())
+        ok &= check("all three engines build the SAME sidecar keys (%s)"
+                    % ", ".join(sorted(sets[0])),
+                    sets[0] == sets[1] == sets[2])
+        # And the cap summary has to be in it, or the honesty check above is
+        # decoration.
+        ok &= check("the sidecar carries the site's own arithmetic",
+                    all("page_language" in k for k in sets))
+    for eng in _ENGINE_MODULES:
+        path = os.path.join(REPO_ROOT, eng + ".py")
+        if not os.path.exists(path):
+            continue
+        esrc = open(path, encoding="utf-8").read()
+        ok &= check("%s merges page 1's cap summary into the sidecar" % eng,
+                    "page_one_cap" in esrc
+                    and "extra.update(page_one_cap)" in esrc)
+        # A dead dataclass field is the same defect as a dead column (§9).
+        ok &= check("%s has no dead `scroll` outcome field" % eng,
+                    "scroll: Optional" not in esrc)
 
     # `--fp-tags` MUST DEFAULT TO ONE OS-FAMILY TAG. It shipped in this
     # family as "Windows,Chrome,Desktop", which the fingerprint API rejects

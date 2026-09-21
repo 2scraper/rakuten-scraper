@@ -1933,6 +1933,19 @@ if __name__ == "__main__":
                        "Scraping Browser supplies its own fingerprint, and "
                        "stacking a second one on top creates a mismatch rather "
                        "than better cover.")
+        # SET, not merely warned about. Both of these engines were correct
+        # here only by accident of code structure: the remote branch returns
+        # before the fingerprint is applied, so the flag stayed True while
+        # the log said "ignored". That is a claim enforced by where the
+        # `return` happens rather than by the guard, and the day someone
+        # moves the fingerprint application into shared setup, these two
+        # engines would silently start stacking a second identity onto a
+        # browser that already has one — which on THIS site is the one thing
+        # measured to get a client refused.
+        #
+        # puppeteer_scraper.py already did this; the suite now pins all
+        # three, in both directions.
+        args.fingerprint = False
     try:
         sys.exit(scrape(args))
     except ProxyError as e:

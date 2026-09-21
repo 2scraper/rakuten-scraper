@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rakuten-scraper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rakuten Ichiba scraper: product listings, prices, Rakuten points, shops and reviews to JSON or CSV."
 readme = "README.md"
 license = "MIT"

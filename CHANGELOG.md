@@ -12,6 +12,39 @@ their output or their bill.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-21
+
+> **Changes behaviour for an existing consumer:** the Selenium and pyppeteer
+> engines were writing a *different sidecar* from the Playwright one. They
+> carried three keys belonging to a sibling repo (`scroll`, `result_header`,
+> `pages_still_growing` — `scroll` is meaningless on a site that serves its
+> whole page at once) and were **missing the cap arithmetic**. On this site
+> that arithmetic is what keeps `status: complete` honest: Rakuten serves
+> 6,750 results of a query that matched 7,460,738, so a sidecar saying only
+> "complete" is lying by omission. All three engines now write the same 20
+> keys, verified by a live run of each, and the suite compares the key sets.
+
+### Fixed
+
+- **The `--fingerprint` + `--cdp-endpoint` guard was a warning, not a
+  gate.** Two of the three engines logged "--fingerprint is ignored with
+  --cdp-endpoint" while leaving the flag True; they were correct only
+  because each remote branch happens to `return` before the fingerprint is
+  applied. That is a claim enforced by where a `return` sits, and the day
+  someone moves the fingerprint into shared setup those two engines would
+  silently start stacking a second identity onto a browser that already has
+  one — which on this site is the one thing measured to get a client
+  refused. All three now force the flag off, and the suite asserts the
+  BEHAVIOUR (every fingerprint application sits behind the flag, followed
+  through the `_apply_fingerprint` indirection) rather than the log line.
+- A dead `scroll` field on the per-page outcome, and a scroll measurement
+  ported verbatim from a sibling. Replaced with this site's own: the same
+  URL fetched by plain HTTP with no JavaScript and by a real browser parses
+  to the same 45 rows.
+- The documented Scraping Browser endpoint in `env_config.py` said
+  `country-id` — a leftover from another repo in this family.
+
+
 ### Changed
 
 - **All four paid paths are now measured, and one README claim is
@@ -170,5 +203,6 @@ And two closed while building it:
   calling it page 1 of the run, so `--url '...?p=2' --pages 1` threw away 45
   perfectly good rows as "the end of the listing".
 
-[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.2.0
 [0.1.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.1.0

@@ -213,10 +213,6 @@ class PageOutcome:
     total_available: Optional[int] = None
     # The raw result-count header, verbatim, for the sidecar.
     header: Optional[str] = None
-    # What the lazy-load scroll did, and crucially whether it SETTLED. A page
-    # whose grid was still growing when the budget ran out is partial, and a
-    # run that reported it as complete would read as a shrinking catalogue.
-    scroll: Optional[dict] = None
     # Rakuten's own arithmetic about the query: total_results,
     # pages_available, reachable_max, capped_by_site, pages_beyond_cap. In
     # the sidecar because on this site "complete" and "exhaustive" are wildly
@@ -477,10 +473,12 @@ def _driver(session):
     def current_url():
         return page.url
 
-    # No scroll primitives and no `page_height`, and that is measured rather
-    # than omitted: three scrolls to the document's own bottom added zero
-    # cards and left the page height unchanged on all three page kinds. Every
-    # listing page holds its whole page of ads and paginates by URL.
+    # No scroll primitives and no `page_height`, and that is measured on
+    # THIS site rather than inherited: the same listing URL fetched by plain
+    # HTTP with no JavaScript at all and by a real browser parsed to the
+    # same 45 rows, with identical skus and prices. Every column comes out
+    # of `window.__INITIAL_STATE__`, which is in the first response, so a
+    # scroll here would be latency bought for nothing.
     return {"count": count, "sleep": sleep, "content": content,
             "current_url": current_url}
 
@@ -1184,24 +1182,35 @@ def scrape(args) -> int:
     final_url = (max(ok_pages, key=lambda o: o.page_num).final_url
                  if ok_pages else args.url)
 
-    # One-per-run context, in the sidecar rather than repeated down a column.
-    # Mirrors the Playwright engine exactly: the seller's own facts in
-    # --mode product, and the scroll trace plus the page's own result header
-    # in --mode listing, because on an infinitely-scrolling site those are
-    # what say how much of the listing the run actually saw.
+    # One-per-run context, in the sidecar rather than repeated down a column,
+    # and IDENTICAL to the other two engines — a sidecar that differs between
+    # engines is the drift `finish_run()` exists to prevent, one level up.
+    #
+    # This carried a sibling's keys (`scroll`, `result_header`,
+    # `pages_still_growing`) until an audit diffed the three engines' actual
+    # sidecars: `scroll` is meaningless here (this site serves its whole page
+    # at once) and the cap arithmetic was MISSING, which is the figure that
+    # keeps `status: complete` honest on a site that serves 6,750 of
+    # 3,000,000 matches.
     extra = None
-    scrolls = {o.page_num: o.scroll for o in outcomes if o.scroll}
+    caps = {o.page_num: o.cap for o in outcomes if o.cap}
     headers = {o.page_num: o.header for o in outcomes if o.header}
-    unsettled = sorted(n for n, s in scrolls.items()
-                       if s and not s.get("settled"))
-    if scrolls or headers:
-        extra = {"scroll": scrolls, "result_header": headers,
-                 "pages_still_growing": unsettled}
-    if unsettled:
+    facts = {o.page_num: o.shop_facts for o in outcomes if o.shop_facts}
+    page_one_cap = next((o.cap for o in outcomes if o.cap), None)
+    if caps or headers or facts:
+        extra = {"page_language": headers}
+        if page_one_cap:
+            extra.update(page_one_cap)
+        if facts:
+            extra["shop"] = facts
+    if page_one_cap and page_one_cap.get("capped_by_site"):
         logger.warning(
-            "Page(s) %s were still loading more products when the scroll "
-            "budget ran out, so their row counts are floors rather than "
-            "the listing.", ", ".join(str(n) for n in unsettled))
+            "This query is capped by the site: %s matches, %s reachable, %d "
+            "page(s) of matches that no `?p=` can address. A complete run "
+            "here is a sample, and the sidecar records both numbers.",
+            f"{page_one_cap.get('total_results'):,}",
+            f"{page_one_cap.get('reachable_max'):,}",
+            page_one_cap.get("pages_beyond_cap") or 0)
 
     return finish_run(all_rows, args.out, args.format, args.allow_empty,
                       blocked=blocked, stop_reason=stop_reason,
