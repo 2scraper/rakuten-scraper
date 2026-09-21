@@ -1,0 +1,125 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project uses [Semantic Versioning](https://semver.org/) as closely
+as a command-line toolkit can. **A patch release means fixes** — including a
+fix that changes a default, where leaving the old default in place would mean
+shipping a known-wrong answer. Anything that changes behaviour for an
+existing user leads the release notes, so nobody has to discover it from
+their output or their bill.
+
+## [Unreleased]
+
+## [0.1.0] — 2026-09-21
+
+First release. Reads Rakuten Ichiba (`rakuten.co.jp`) listings and product
+pages to JSON or CSV, with four interchangeable back ends and the row schema
+shared across the [2scraper](https://github.com/2scraper) family.
+
+### Added
+
+- **Two modes, both measured against real captures.**
+  `--mode listing` reads a keyword search
+  (`search.rakuten.co.jp/search/mall/{keyword}/`), a genre listing
+  (`.../search/mall/-/{genreId}/`) or a genre landing page
+  (`www.rakuten.co.jp/category/{genreId}/`) — 45 products a page.
+  `--mode product` reads one `item.rakuten.co.jp/{shop}/{code}/` page and
+  adds per-variant prices, a variant count and a verified was-price.
+- **42 columns**, the first 18 byte-identical to the family prefix. Rakuten's
+  own additions include `points` and `point_rate` (a point campaign is a
+  discount that never touches the price column), `shop_*` (this is a mall —
+  74 distinct merchants across 405 measured rows), `shipping_fee` /
+  `free_shipping`, `price_max` and `has_price_range`, `subscription_price`,
+  `genre_id` / `genre_path` / `genre_rank`, `is_39shop`, and `variants`.
+- **Four back ends**: `playwright_scraper.py` (primary),
+  `selenium_scraper.py`, `puppeteer_scraper.py` and `scraper_api_client.py`.
+  The three browser engines take the same flags and were verified to produce
+  the same rows: 90 rows over two pages, identical skus in identical order,
+  every column identical.
+- **`page_flow.py`** carrying the six-state classification as DATA, so the
+  three engines cannot disagree about whether a page is worth retrying or
+  worth paying for.
+- **`diff_runs.py`** joining two runs on `sku`, tracking the money columns
+  plus `points`, and refusing to compare runs it cannot compare.
+- **565 offline checks** (`smoke_test.py`), passing with no engine library
+  installed, with fixtures cut from 13 real captures by `make_fixtures.py`
+  and verified to parse identically to the untrimmed originals.
+- **An ungated daily canary.** A real three-page scrape from a bare GitHub
+  runner with no secrets, which is this repo's central claim under test
+  rather than a convenience.
+
+### Measured, and worth knowing before you use this
+
+Every figure here is from a real run on 2026-09-21 from one Hetzner
+datacentre exit in Helsinki.
+
+- **No paid product is needed for the routes this reads, and the gate is the
+  CLIENT rather than the address.** From one address, unchanged: `curl` with
+  curl's own User-Agent was served 92 KB and 45 products; the same `curl`
+  claiming a Chrome User-Agent got a 43-byte Akamai deny; headless Chromium
+  was served 855 KB; headful Chromium 969 KB. What is refused is a
+  contradiction between a claimed identity and the TLS fingerprint under it.
+- **A refusal arrives under HTTP 200.** The status code is not the signal, so
+  detection uses the reference-id shape plus the page being built out of
+  Rakuten's own `r10s.jp` assets (90–343 references on served pages, 0–1 on
+  refusals).
+- **HTTP 503 is a throttle, not a block**, and it renders the identical body
+  to the 403 refusal — only the status separates them. A 503 costs a wait at
+  the same exit and does not count towards exit 3.
+- **Every query is capped at 6,750 results (150 pages of 45)** however many
+  it matched. One measured query reported `numFound: 3,053,682` against that
+  same 6,750, so a complete run of it is a 0.2% sample. The sidecar records
+  both numbers.
+- **No captcha is configured anywhere on this site** — zero vendor markers
+  across 13 captures, served and refused alike, and Akamai's deny page
+  carries no widget. The solver is wired and bounded anyway, because a bot
+  manager can be switched on between deploys.
+- **The 2Captcha Scraper API path is UNVERIFIED on this site.** No key was
+  available to the work that built this repo, so `scraper_api_client.py`
+  says exactly that rather than guessing in either direction.
+
+### Fixed before the first release
+
+Five defects found by running the code rather than by reading it — three of
+them in code inherited from this family's shared core, where they had been
+live for months:
+
+- **`SOLVES_PER_PAGE` was not enforced.** Each engine called the captcha
+  solver twice per attempt and counted once, so one page could buy two
+  solves while the constant read like a cap. Both call sites now route
+  through one budget helper, and the suite counts the call sites, the guards
+  and the increments and asserts the three are equal.
+- **A fully-painted short page reported "the grid never painted".**
+  `found <= threshold` where `wait_for_count` returns as soon as it sees
+  `threshold` matches. Only visible on a query with fewer results than the
+  readiness floor, which is why it survived.
+- **`end_of_listing` was missing from the complete-run set**, so a run that
+  correctly found the end of a listing reported exit 6 (partial).
+- **`position` was numbered by payload index**, so Rakuten's injected
+  sponsored slots (7 of 52 entries on one measured page, and the count
+  varies between fetches) shifted every row: the same 45 products came out
+  1–45 in one engine and 8–52 in another.
+- **The pyppeteer engine was refused from its second navigation onward.**
+  Setting a user agent through pyppeteer's CDP override gets that engine
+  denied on navs 2–4 while nav 1 is served — and a UA that *matched* the real
+  platform was refused just as hard, so it is the override rather than the
+  platform mismatch. That engine now sets no user agent, which the suite
+  pins.
+
+And two closed while building it:
+
+- **The credential scan could not see inside the fixtures.** Every fixture in
+  this family is stored as a JSON string, so its quotes arrive escaped; the
+  key-shaped-field rule used bare quotes and therefore matched zero times in
+  the largest file in the repository. A real-shaped key planted in a fixture
+  passed the scan. The pattern now tolerates escaped quotes, verified by
+  planting one.
+- **The end-of-listing check compared against the wrong page number.** A run
+  started on a URL that already carries `?p=2` asks the site for page 2 while
+  calling it page 1 of the run, so `--url '...?p=2' --pages 1` threw away 45
+  perfectly good rows as "the end of the listing".
+
+[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.1.0

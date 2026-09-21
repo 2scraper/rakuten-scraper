@@ -1,0 +1,266 @@
+name: canary
+
+# tests.yml (deliberately) never touches rakuten.co.jp — see its own header
+# for why. That leaves a real gap: a markup change on the site itself only
+# shows up when a user hits it and files an issue, while the offline badge
+# stays green throughout. This workflow is the other half — a real run
+# against a real listing URL — so a site-side break is caught here first.
+#
+# THIS CANARY NEEDS NO SECRETS, AND THAT IS THE POINT
+# ---------------------------------------------------
+# It runs a real three-page scrape from a bare GitHub runner, daily, and it
+# is EXPECTED TO BE GREEN. That is not a convenience — it is what keeps this
+# repo's central claim honest. The README says you need no key, no proxy and
+# no account to read this site's listings; this workflow is that claim, under
+# test, every morning. If Rakuten ever puts the listing routes behind
+# something, the badge goes red the next day and the claim is retested
+# without anyone having to remember to.
+#
+# Measured 2026-09-21 from one datacentre address, no credentials of any
+# kind: a keyword search returned 45 products a page, and a three-page run
+# returned 135 rows with 100% price coverage and status `complete`.
+#
+# The family's rule is that a canary which CANNOT pass must skip rather than
+# fail, because a check that is always red teaches everyone to ignore checks.
+# The other half of that rule applies here: a canary that CAN pass without a
+# credential must never be gated on one.
+#
+# What a runner cannot test, and why there is no second job for it:
+#
+#   * `ranking.rakuten.co.jp` answered 403 to plain HTTP and to headless
+#     Chromium and 200 to HEADFUL Chromium. This repo does not read that
+#     route (its pages carry no payload at all), so there is nothing to
+#     canary.
+#   * the 2Captcha Scraper API path has never been run against this site —
+#     no key was available when the repo was written. A job that needs a
+#     secret nobody has set would skip every day and test nothing, so it is
+#     honest documentation in scraper_api_client.py's docstring instead.
+
+on:
+  schedule:
+    # Early UTC, which is mid-morning in Japan — the site is awake and its
+    # campaign banners have rolled over, so a run here sees what a user sees.
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  live-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the Playwright engine
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-playwright.txt
+          playwright install --with-deps chromium
+
+      - name: Scrape a real, known-good listing
+        id: run
+        # A GENRE listing rather than a keyword search, and the choice is
+        # deliberate on three counts:
+        #
+        #  * a genre id is stable. A keyword's result set changes with
+        #    Rakuten's ranking every day, so a row-count floor against one
+        #    would be measuring the merchandising rather than the parser.
+        #  * it is deep enough that three pages are never the end of it
+        #    (142,000 hits, the site's own 150-page cap), so
+        #    `pages_completed` is a real check rather than an accident of a
+        #    short catalogue.
+        #  * every row carries a price (405 of 405 measured), so a price
+        #    floor means something.
+        #
+        # --pages 3, not 1: with one page pagination is never exercised, so a
+        # broken `?p=` convention would stay invisible here — precisely the
+        # silent decay this workflow exists to catch. It also exercises the
+        # currency carry-forward, since Rakuten publishes the block that
+        # states the currency on page 1 only.
+        #
+        # --delay 5: Rakuten answers a client going too fast with HTTP 503
+        # and its own rate-limit page. The engine treats that as a throttle
+        # and waits, but there is no reason to provoke it from CI.
+        #
+        # set +e: GitHub Actions runs `run:` steps as `bash -e`, so without
+        # this a non-zero scraper exit aborts the script on THAT line and the
+        # `echo "exit_code=$?"` below never runs. continue-on-error only
+        # stops the step from failing the job; it does not touch errexit.
+        continue-on-error: true
+        run: |
+          set +e
+          python3 playwright_scraper.py \
+            --url "https://search.rakuten.co.jp/search/mall/-/100356/" \
+            --pages 3 --delay 5 --retries 4 \
+            --out canary_run --dump-html canary_run.html
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Interpret the exit code
+        id: verdict
+        # ACCESS CONDITIONS ARE NOT DEFECTS. Failing the job on any non-zero
+        # exit would make the canary red for things that are nobody's bug —
+        # so 3 (blocked) and 6 (partial) are WARNINGS, while a run that got
+        # in and found the wrong thing stays red.
+        #
+        # Note that on THIS site a blocked canary is genuinely surprising
+        # rather than routine, because the listing routes are not gated. If
+        # exit 3 starts appearing every day, that is news: either Rakuten has
+        # begun refusing GitHub's address ranges, or something in this repo
+        # has started sending a client whose claimed identity and TLS
+        # fingerprint disagree — which is the one thing Akamai was measured
+        # to refuse here.
+        run: |
+          set -e
+          code="${{ steps.run.outputs.exit_code }}"
+          tested=true
+          case "$code" in
+            0)
+              echo "OK — products parsed from a live run." ;;
+            3)
+              tested=false
+              echo "::warning::Blocked before parsing (exit 3) — reported as an ACCESS condition rather than a code defect, so this run is not failed. On this site that is NOT routine: the listing routes were measured ungated from a datacentre address. Check canary_run_page1_debug.html — if it is 43 bytes of 'Reference  #', Akamai refused the client, and the first thing to suspect is a user agent or fingerprint that disagrees with the TLS handshake underneath it, not the address."
+              echo "### Canary did NOT test anything (exit 3, blocked)" >> "$GITHUB_STEP_SUMMARY"
+              echo "The site did not serve the request, so the parser was not exercised. Unusual here — see TROUBLESHOOTING.md, first section." >> "$GITHUB_STEP_SUMMARY" ;;
+            6)
+              tested=false
+              echo "::warning::Partial run (exit 6) — some pages were gathered and the run then stopped early. canary_run.meta.json names which pages failed. If the sidecar says stop_reason=end_of_listing this is not partial at all and the code is wrong; if it repeats every day, suspect the ?p= convention."
+              echo "### Canary tested only PART of the run (exit 6)" >> "$GITHUB_STEP_SUMMARY"
+              echo "See \`pages_failed\` in the sidecar artefact." >> "$GITHUB_STEP_SUMMARY" ;;
+            4)
+              echo "::error::Ran fine but parsed 0 rows (exit 4) from a genre listing that holds 45 products per page. Either window.__INITIAL_STATE__.state.data.ichibaSearch has moved, or the item-URL pattern the DOM fallback anchors on has. This is the regression this canary exists to catch — the HTML dump in the artefacts tells you which."
+              exit 1 ;;
+            5)
+              echo "::error::Remote API error (exit 5) from a run that uses no remote API. That should be impossible here; read the log."
+              exit 1 ;;
+            2)
+              echo "::error::Bad usage (exit 2) — the workflow's own arguments are wrong, not the site."
+              exit 1 ;;
+            *)
+              echo "::error::The scraper crashed (exit $code)."
+              exit 1 ;;
+          esac
+          echo "tested=$tested" >> "$GITHUB_OUTPUT"
+
+      - name: Check what the run actually produced
+        if: steps.verdict.outputs.tested == 'true'
+        # Thresholds are MEASURED figures with a margin, not round numbers
+        # someone liked. Each one is the number from the live runs recorded
+        # in the README, floored enough to survive a short last page and
+        # Rakuten's variable injection of sponsored slots (7 of 52 payload
+        # entries on one measured page, and the count changes between
+        # fetches).
+        run: |
+          set -e
+          python3 - <<'PY'
+          import json, sys, collections
+
+          meta = json.load(open("canary_run.meta.json"))
+          rows = json.load(open("canary_run.json"))
+          problems = []
+
+          def want(label, condition, detail=""):
+              if not condition:
+                  problems.append(f"{label}{(' — ' + detail) if detail else ''}")
+
+          # THE RUN ITSELF
+          want("status is not complete (%s)" % meta.get("status"),
+               meta.get("status") == "complete",
+               "stop_reason=%s" % meta.get("stop_reason"))
+          want("fewer than 3 pages completed (%s)" % meta.get("pages_completed"),
+               meta.get("pages_completed") == 3)
+          want("pages reported as failed: %s" % meta.get("pages_failed"),
+               not meta.get("pages_failed"))
+
+          # ROW COUNT. 45 a page on 11 of 11 measured captures; 120 leaves
+          # room for a short page without letting a two-page run pass as
+          # three.
+          want("only %d rows" % len(rows), len(rows) >= 120,
+               "expected ~135 (3 pages x 45)")
+
+          # THE COLUMNS THIS SITE IS SCRAPED FOR.
+          priced = sum(1 for r in rows if r.get("price") is not None)
+          share = 100.0 * priced / max(1, len(rows))
+          want("price coverage %.0f%%" % share, share >= 95,
+               "405 of 405 rows carried a price when measured")
+          cur = {r.get("currency") for r in rows}
+          want("currency is not JPY throughout (%s)" % sorted(
+                   c for c in cur if c), cur == {"JPY"},
+               "the currency is read from page 1's JSON-LD and carried "
+               "forward; a None here means that block moved")
+          want("no row carries Rakuten points",
+               any(isinstance(r.get("points"), int) for r in rows),
+               "point.count was populated on 405 of 405 rows")
+          want("no row names its merchant",
+               all(r.get("shop_code") for r in rows),
+               "this site is a mall; shop_code came from the payload on "
+               "every measured row")
+
+          # THE ARITHMETIC BUG §18 NAMES: position restarts per page, so the
+          # pair is what has to be unique.
+          pairs = [(r.get("page"), r.get("position")) for r in rows]
+          dupes = [p for p, n in collections.Counter(pairs).items() if n > 1]
+          want("page+position is not unique (%d duplicate pair(s))"
+               % len(dupes), not dupes)
+          want("rows do not span 3 pages (%s)"
+               % sorted({r.get("page") for r in rows}),
+               len({r.get("page") for r in rows}) == 3)
+
+          # ZERO IS NOT A RATING. 28 of 405 measured rows are unreviewed and
+          # Rakuten writes that as a 0; a 0 reaching the output means the
+          # nulling broke.
+          want("a row carries a rating of 0, which is Rakuten's 'unreviewed' "
+               "sentinel rather than a grade",
+               not any(r.get("rating") == 0 for r in rows))
+          want("a row carries a rating without a review count",
+               not any(r.get("rating") is not None
+                       and not r.get("review_count") for r in rows))
+
+          # NO NEGATIVE DISCOUNTS. Costs one line and catches the regression
+          # forever (§4).
+          want("a row has an original_price at or below its price",
+               not any(r.get("original_price") is not None
+                       and r.get("price") is not None
+                       and r.get("original_price") <= r.get("price")
+                       for r in rows))
+
+          # THE SITE'S OWN ARITHMETIC, which the sidecar must carry — the
+          # difference between "complete" and "exhaustive" on this site is
+          # three orders of magnitude, and a sidecar that said only
+          # "complete" would be lying by omission.
+          for key in ("total_results", "reachable_max", "capped_by_site",
+                      "page_size"):
+              want("the sidecar is missing %s" % key, key in meta)
+          want("page_size is not 45 (%s)" % meta.get("page_size"),
+               meta.get("page_size") == 45)
+
+          if problems:
+              print("::error::the canary got in and found the wrong thing:")
+              for p in problems:
+                  print("::error::  %s" % p)
+              sys.exit(1)
+          print("canary OK: %d rows, %.0f%% priced, %s, "
+                "%s of %s results reachable"
+                % (len(rows), share, meta["status"],
+                   f"{meta.get('reachable_max'):,}",
+                   f"{meta.get('total_results'):,}"))
+          PY
+
+      - name: Upload what the run produced
+        if: always()
+        # On EVERY run, including the failures — the dump is the only thing
+        # that tells a parsing bug from a too-early snapshot, and a canary
+        # whose evidence is thrown away on failure is a canary you cannot act
+        # on.
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-run
+          path: |
+            canary_run.json
+            canary_run.csv
+            canary_run.meta.json
+            canary_run.html*
+            canary_run_page*_debug.html
+          if-no-files-found: warn
+          retention-days: 14
