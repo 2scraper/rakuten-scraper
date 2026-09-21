@@ -263,6 +263,15 @@ def _minimal_listing(text, keep):
     ext_tags = "".join(sorted(set(re.findall(
         r'<script[^>]+src="(?:chrome|moz)-extension://[^"]*"[^>]*>\s*</script>',
         text))))
+    # ...and the extension's empty MOUNT ELEMENT, which is not a script tag
+    # and therefore survives the extension-script strip. Kept because that
+    # is precisely the trap worth pinning: a sibling repo needs
+    # `<captcha-widgets` as a marker because on ITS site the element is the
+    # site's own, and copying that marker here would fire on every good page
+    # fetched over --cdp-endpoint. Proven by the split — 0 occurrences on
+    # this same URL fetched locally, 1 through the Scraping Browser.
+    ext_tags += "".join(sorted(set(re.findall(
+        r'<captcha[-a-z]*></captcha[-a-z]*>', text))))
 
     # The asset references the positive-served signal counts. Taken from the
     # capture rather than invented, so the fixture is made of the site's own

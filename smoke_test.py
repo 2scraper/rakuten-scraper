@@ -2236,6 +2236,39 @@ def test_captcha():
                 "the extension strip",
                 not [m for m in product_parser.BOT_CHALLENGE_MARKERS
                      if m in cdp_html])
+    # `<captcha-widgets>` — AN EMPTY MOUNT POINT, and whose it is differs
+    # between repos in this family, which is why it is pinned here.
+    #
+    # On a sibling site that element is the SITE's own: it ships on every
+    # page and a reCAPTCHA key sits in the page config beside it, so that
+    # repo needed markers for the shapes its captcha would take. Here it is
+    # the 2Captcha auto-solve extension's, and the proof is the split:
+    #
+    #   /search/mall/-/551177/ via local Chromium    0 occurrences
+    #   the SAME url via the Scraping Browser        1 occurrence
+    #
+    # Both carry Akamai's own sensor, so the difference is not the route.
+    #
+    # It matters because it SURVIVES the extension-script strip — the strip
+    # removes `<script src="chrome-extension://…">` tags, not a custom
+    # element the extension creates. So anyone who adds `<captcha-widgets`
+    # to the marker set, copying the sibling that needs it, would fire on
+    # every good page fetched over --cdp-endpoint.
+    ok &= check("the extension's empty <captcha-widgets> mount is present "
+                "on the CDP page",
+                re.search(r"<captcha[-a-z]*[\s>]", cdp_html) is not None)
+    ok &= check("...and absent from the same URL fetched locally",
+                re.search(r"<captcha[-a-z]*[\s>]",
+                          fx("search_sponsored")[0]) is None)
+    ok &= check("...so it is NOT carried as a marker, because it would fire "
+                "on every good CDP page",
+                not any("captcha-widget" in m
+                        for m in product_parser.BOT_CHALLENGE_MARKERS))
+    ok &= check("...and it survives the extension strip, which is why the "
+                "marker set rather than the strip has to be right",
+                re.search(r"<captcha[-a-z]*[\s>]",
+                          product_parser._without_extension_scripts(cdp_html))
+                is not None)
     ok &= check("so a CDP-fetched page reads as content, not as a challenge",
                 detect_page_state(cdp_html, cdp_status, cdp_url) == "content"
                 and detect_bot_challenge(cdp_html) is None)
