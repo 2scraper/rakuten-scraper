@@ -83,6 +83,8 @@ FIXTURE_CONTEXT = {
                           200),
     "search_deep":       ("https://search.rakuten.co.jp/search/mall/-/"
                           "100356/?p=149", 200),
+    "search_via_cdp":    ("https://search.rakuten.co.jp/search/mall/-/"
+                          "100356/", 200),
     "search_no_results": ("https://search.rakuten.co.jp/search/mall/"
                           "zzzqqqxyznotathing123/", 200),
     "item_page":         ("https://item.rakuten.co.jp/ajinomoto/"
@@ -117,6 +119,11 @@ SOURCES = {
     # returning 1), and a real UNREVIEWED product. The first six rows of any
     # popular query are all reviewed; 9 of 45 on this page are not.
     "search_deep":          ("search_deep_p149.html", 4, False),
+    # Fetched over --cdp-endpoint, so it carries the Scraping Browser
+    # extension's 16 injected captcha hunters. The only fixture here that
+    # can prove the marker set does not mistake them for the site's own
+    # challenge.
+    "search_via_cdp":       ("search_genre_via_cdp.html", 11, False),
     "search_no_results":    ("search_no_results.html", 0, False),
     # Detail pages, kept as bytes because they are EUC-JP.
     "item_page":            ("item_ajinomoto.euc.html", None, True),
@@ -237,6 +244,26 @@ def _minimal_listing(text, keep):
             r'<script[^>]*type="application/ld\+json"[^>]*>.*?</script>',
             text, re.S):
         ld += block
+    # THE SCRAPING BROWSER'S OWN EXTENSION TAGS, kept verbatim when the
+    # capture has them. This is the fixture §21 asks for: a guard is only as
+    # good as the fixture it runs against, and the one that matters is the
+    # page fetched the way a real run fetches it.
+    #
+    # A page pulled over --cdp-endpoint carries 16 injected hunter and
+    # interceptor scripts from 2Captcha's auto-solve extension (amazon_waf,
+    # arkoselabs, captchafox, geetest, turnstile, recaptcha, …), and
+    # `cf-turnstile` appears ONCE in it — on a page holding the full
+    # catalogue. Carrying that marker, as this family's notes originally
+    # recommended, would report exit 3 on a perfectly good 1.1 MB page.
+    #
+    # So the tags go into the fixture and the suite asserts the marker set
+    # scores ZERO against them. Locally-captured fixtures cannot exercise
+    # this at all, which is exactly how a sibling repo's version of this
+    # guard passed for the wrong reason.
+    ext_tags = "".join(sorted(set(re.findall(
+        r'<script[^>]+src="(?:chrome|moz)-extension://[^"]*"[^>]*>\s*</script>',
+        text))))
+
     # The asset references the positive-served signal counts. Taken from the
     # capture rather than invented, so the fixture is made of the site's own
     # bytes.
@@ -245,11 +272,11 @@ def _minimal_listing(text, keep):
     title = re.search(r"<title>(.*?)</title>", text, re.S)
     return (
         "<!DOCTYPE html><html lang=\"ja\"><head><meta charset=\"utf-8\">"
-        "<title>%s</title>%s%s</head><body>"
+        "<title>%s</title>%s%s%s</head><body>"
         "<script>window.__INITIAL_STATE__ = %s;</script>"
         "</body></html>" % (
             (title.group(1).strip() if title else "Rakuten"),
-            asset_html, ld, state_json))
+            asset_html, ld, ext_tags, state_json))
 
 
 def _minimal_item(raw):

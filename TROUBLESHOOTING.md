@@ -230,10 +230,18 @@ list is rejected, and so are `Chrome`, `Desktop` and `Mobile` on their own.
 Measured against the live API on 2026-09-10: `Windows` succeeds;
 `Windows,Chrome,Desktop`, `Chrome` and `Desktop` each 400.
 
-And on this site, think before reaching for it at all: a fingerprint replaces
-the browser's own consistent identity with a claimed one, and a claimed
-identity that does not match the TLS underneath it is precisely what Akamai
-refuses here.
+On this site a fingerprint is measured to WORK — 2026-09-21, a
+`--fingerprint` run was served 90 rows over two pages, with the page itself
+reporting the fingerprint's user agent, timezone, platform, languages and
+core count. The reason it works is that the API supplies a *complete*
+identity; what Akamai refuses here is a client that contradicts itself, so a
+bare user-agent override is refused where a full fingerprint is not.
+
+Two things not to do with it, both because they manufacture that
+contradiction: do not stack it on `--cdp-endpoint` (the remote browser
+already has an identity, and the engine ignores the flag there and says so),
+and do not put a fingerprint's user agent on an HTTP client without the
+client hints that go with it.
 
 ## Which engine should I use?
 

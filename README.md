@@ -316,7 +316,7 @@ band, shop, tag — and run each slice.
 | `playwright_scraper.py` | **primary**, recommended |
 | `selenium_scraper.py` | parity |
 | `puppeteer_scraper.py` | parity (pyppeteer is effectively unmaintained) |
-| `scraper_api_client.py` | HTTP-only, **unverified on this site** |
+| `scraper_api_client.py` | HTTP-only, measured at **$0.0005** a page |
 
 All three browser engines take the same flags, produce the same columns in
 the same order, and map the same exit codes. Verified rather than asserted:
@@ -372,22 +372,43 @@ proxy and no account, from a datacentre address:
   complete`, exit 0;
 * the same on the genre route, and with a headful browser.
 
-What the 2Captcha products actually buy you here:
+### All four paid paths, measured
 
-* **Proxies** — volume. Rakuten answers a client going too fast with HTTP
-  503 and its own *アクセスが集中しております* ("access is concentrated") page.
-  Spreading a long run across exits is how you avoid meeting it. A Japanese
-  exit is also the thing to try if a consistent client is somehow still being
-  refused.
-* **The Scraping Browser API** — no browser infrastructure, a chosen exit
-  country, and persistent cookies per profile. One live connection per
-  profile, so do not raise `--concurrency` above 1 with it.
-* **Fingerprints** — a consistent device identity. Think twice on this site
-  specifically: a fingerprint replaces the browser's own consistent identity
-  with a claimed one, and a claimed identity that does not match the TLS
-  underneath it is precisely what Akamai refuses here.
-* **Captcha solving** — nothing, today, and that is measured rather than
-  assumed. See below.
+Each was run against this site on 2026-09-21. The point of the table is that
+none of them is *needed* — and that each does something specific when you do
+want it.
+
+| Path | Result | What it buys |
+|---|---|---|
+| Scraping Browser API (`--cdp-endpoint`, US exit) | 90 rows over 2 pages, `complete` | no browser infrastructure, a chosen exit country, persistent cookies per profile |
+| Proxy (`--proxy`, EU residential exit) | 90 rows over 2 pages, `complete` | volume — spreading a long run so you stop meeting the 503 |
+| Fingerprint (`--fingerprint`) | applied and served; 90 rows over 2 pages | a consistent device identity |
+| Scraper API | HTTP 200, 1.09 MB, 45 products, **$0.0005** | no browser at all, one request a page |
+| Captcha solving | nothing to solve — see below | — |
+
+Four notes, because each cost a measurement:
+
+* **A fingerprint is NOT a hazard here, but half of one is.** This README
+  said otherwise before the path had been run, and the measurement is
+  narrower than the warning was. A fingerprint applied *completely* — user
+  agent, client hints, timezone, languages and platform together — is
+  served. The run *without* it hit the same 503 on page 1 that the run with
+  it did, so that throttle was request volume rather than the fingerprint.
+  What Akamai refuses is a client that contradicts *itself*, which is why a
+  bare user-agent override is refused and a complete identity is not.
+* **`--concurrency` is refused with `--cdp-endpoint`**, and so is `--proxy`,
+  and `--fingerprint` is ignored there. A Scraping Browser API profile allows
+  one live connection, it already has an exit, and it already has an
+  identity. Each refusal prints its reason rather than quietly doing
+  nothing.
+* **Proxies buy volume**, which is the thing actually worth buying here.
+  Rakuten answers a client going too fast with HTTP 503 and its own
+  *アクセスが集中しております* page — met three times during testing, always
+  cleared by the wait. A Japanese exit is also what to try if a consistent
+  client is somehow still refused.
+* **Credentials never reach a log.** A proxied run prints
+  `http://***:***@eu.proxy.2captcha.com:2334` — host and port kept, because
+  which exit a run used is the useful half and is not the secret.
 
 ### There is no captcha on this site
 

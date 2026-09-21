@@ -288,10 +288,25 @@ def playwright_init_script(fp: dict) -> str:
     """
     nav = fp.get("navigator") or {}
     webgl = fp.get("webgl") or {}
+    intl = fp.get("intl") or {}
+    # `navigator.languages`, which Playwright's `locale=` does NOT set.
+    # Measured 2026-09-21 against a live fingerprint: the API returned
+    # `intl.languages: ["en-US", "en"]` while the page reported
+    # `navigator.languages` as `["en-US"]` alone, because `locale=en-US`
+    # sets the header and the single primary language and nothing else.
+    #
+    # A one-element languages list beside a two-element Accept-Language is
+    # a small contradiction, and the site this repo reads is the one that
+    # punishes contradictions specifically: Akamai refuses a client whose
+    # claimed identity disagrees with itself. Cheap to close, so closed.
+    languages = intl.get("languages")
+    if not (isinstance(languages, list) and languages):
+        languages = None
     payload = json.dumps({
         "platform": nav.get("platform"),
         "hardwareConcurrency": nav.get("hardwareConcurrency"),
         "deviceMemory": nav.get("deviceMemory"),
+        "languages": languages,
         "webglVendor": webgl.get("vendor"),
         "webglRenderer": webgl.get("renderer"),
     })
@@ -306,6 +321,11 @@ def playwright_init_script(fp: dict) -> str:
   def(Navigator.prototype, 'platform', fp.platform);
   def(Navigator.prototype, 'hardwareConcurrency', fp.hardwareConcurrency);
   def(Navigator.prototype, 'deviceMemory', fp.deviceMemory);
+  // Frozen so `languages.length` and the array identity read as a real
+  // browser's do; a plain array here would still be mutable, which is
+  // itself a tell.
+  if (fp.languages) def(Navigator.prototype, 'languages',
+                        Object.freeze(fp.languages.slice()));
 
   // WEBGL_debug_renderer_info: 37445 = UNMASKED_VENDOR, 37446 = UNMASKED_RENDERER.
   // Patch both WebGL1 and WebGL2 — a fingerprinter that reads only WebGL2 would

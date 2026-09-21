@@ -1290,11 +1290,14 @@ def parse_args():
                    help="Fetch a browser fingerprint from 2captcha's "
                         "Fingerprint API and apply it to the launched "
                         "browser. Needs --twocaptcha-key. Ignored with "
-                        "--cdp-endpoint, where the Scraping Browser supplies "
-                        "its own — and on THIS site stacking a second "
-                        "identity is actively counterproductive, since what "
-                        "Akamai refuses here is a client whose claimed "
-                        "identity and TLS fingerprint disagree.")
+                        "--cdp-endpoint, where the Scraping Browser API "
+                        "supplies its own — stacking a second identity on "
+                        "top is how you manufacture the one thing Akamai "
+                        "refuses here, a client that contradicts itself. On "
+                        "its own a fingerprint is measured to work on this "
+                        "site: the API supplies the client hints, timezone "
+                        "and languages to go with the user agent, and such "
+                        "a run was served 90 rows over two pages.")
     # ONE OS-family tag, not a list. It shipped as "Windows,Chrome,Desktop"
     # across this family, which the API rejects with HTTP 400, so
     # --fingerprint failed on every invocation while looking configured

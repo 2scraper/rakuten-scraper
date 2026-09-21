@@ -6,34 +6,42 @@ One HTTP request per page, no local browser, no Playwright install. The
 the HTML; this client parses it with the same `product_parser` the browser
 engines use, so the rows and columns are identical.
 
-UNVERIFIED ON THIS SITE — and saying so is the point
-----------------------------------------------------
-No 2Captcha key was available to the session that wrote this repo, so this
-path has **not been run against rakuten.co.jp**. That sentence is the whole
-status: not "it works", not "it does not work".
+MEASURED ON THIS SITE, 2026-09-21
+---------------------------------
+It works, and it is the cheapest way in:
 
-This family has paid for the alternative twice. A sibling repo shipped a
-README saying a captcha "is inapplicable on this site" when the truth was
-that the repo had not implemented the task type — a claim about the PRODUCT
-made from a fact about the CODE, invisible to every test, and wrong in the
-direction that costs a reader money (§19). So what follows is the reasoning,
-explicitly labelled as reasoning:
+    POST https://scraper.2captcha.com/tasks/sync
+    -> HTTP 200, 1,092,737 bytes of HTML, 45 products parsed, $0.0005
 
-* The gate on this site is **client consistency**, not the address. Measured
-  2026-09-21 from one datacentre IP: plain curl with curl's own User-Agent
-  was served 92 KB and 45 products; the same curl claiming a Chrome
-  User-Agent got a 43-byte Akamai deny; headless Chromium was served 855 KB.
-  So whether this API gets in depends on what its fetcher sends, which is
-  not something this repo can see from outside.
-* If it is refused, the refusal arrives under **HTTP 200** with a 43-byte
-  body. Neither this client nor the parser may trust the status code; both
-  decide "was this served at all" from `Reference  #…` and from the page
-  being built out of Rakuten's own asset hosts.
+Its 52-entry payload carried 7 sponsored placements, which the parser
+dropped with a log line — the same behaviour as every other transport, which
+is the point of this client sharing `product_parser` rather than having its
+own.
 
-If you have a key, one request settles it. Run it, read the exit code, and
-send a PR that replaces this section with the measurement and its date —
-including if the answer is that it does not get in, which is just as useful
-to a reader and much cheaper than finding out from a bill.
+This section previously said the path was unverified, because no key was
+available to the session that wrote the repo. That was the honest sentence at
+the time and it is worth saying why it was phrased that way: a sibling repo
+once shipped a README telling readers a 2Captcha key would not help them,
+when the truth was that the client had not implemented the task type — a
+claim about the PRODUCT made from a fact about the CODE, invisible to every
+test, and wrong in the direction that costs a reader money. So the rule is
+that an unrun path says "not run", never "does not work".
+
+WHAT TO KNOW BEFORE USING IT HERE
+---------------------------------
+* The gate on this site is the CONSISTENCY of the client, not the address.
+  Measured from one datacentre IP: plain curl with curl's own User-Agent was
+  served 92 KB and 45 products; the same curl claiming a Chrome User-Agent
+  got a 43-byte Akamai deny. This API's fetcher gets in, so whatever it
+  sends is self-consistent — but that is a fact about the API today, not a
+  guarantee, and it is exactly the kind of thing to re-measure rather than
+  inherit.
+* If it is ever refused, the refusal arrives under **HTTP 200** with a
+  43-byte body. Neither this client nor the parser may trust the status
+  code; both decide "was this served at all" from the reference-id shape and
+  from the page being built out of Rakuten's own asset hosts.
+* One request is one page. There is no pagination here — pass `?p=N`
+  yourself, and mind that Rakuten caps every query at 6,750 results.
 
     python3 scraper_api_client.py \\
         --url "https://search.rakuten.co.jp/search/mall/コーヒー/"

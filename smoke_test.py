@@ -2212,6 +2212,35 @@ def test_captcha():
                 "challenge",
                 detect_bot_challenge(fx("search_p1")[0] + EXTENSION_TAGS)
                 is None)
+    # AND THE SAME THING AGAINST A PAGE ACTUALLY FETCHED THAT WAY, which is
+    # the fixture §21 says a guard needs: a sibling repo's version of this
+    # check ran only against a curl-fetched 404, which carries no injection
+    # at all, so it passed for the wrong reason.
+    #
+    # Counted on the real thing: 16 injected hunter/interceptor scripts, and
+    # `cf-turnstile` appears ONCE — on a page holding the catalogue. Carrying
+    # that marker, as this family's notes originally recommended, would
+    # report exit 3 on a good 1.1 MB page. It took the count to stop the
+    # mistake, not the rule.
+    cdp_html, cdp_url, cdp_status = fx("search_via_cdp")
+    injected = len(re.findall(r"(?:chrome|moz)-extension://", cdp_html))
+    ok &= check("the CDP fixture really carries the extension's injections "
+                "(%d script(s))" % injected, injected >= 10)
+    ok &= check("...including a cf-turnstile hunter, on a SERVED page "
+                "(%d occurrence(s))" % cdp_html.count("cf-turnstile"),
+                cdp_html.count("cf-turnstile") >= 1)
+    ok &= check("cf-turnstile is therefore NOT in the marker set",
+                not any("cf-turnstile" in m
+                        for m in product_parser.BOT_CHALLENGE_MARKERS))
+    ok &= check("the marker set scores zero against it, WITHOUT relying on "
+                "the extension strip",
+                not [m for m in product_parser.BOT_CHALLENGE_MARKERS
+                     if m in cdp_html])
+    ok &= check("so a CDP-fetched page reads as content, not as a challenge",
+                detect_page_state(cdp_html, cdp_status, cdp_url) == "content"
+                and detect_bot_challenge(cdp_html) is None)
+    ok &= check("...and its rows parse",
+                len(parse_products(cdp_html, cdp_url)) >= 3)
     # And the honest sentence about the paid product, which is the one this
     # family has got wrong before (§19). What may be written is "this repo
     # does not implement X", never "X cannot be solved" — 2Captcha solves

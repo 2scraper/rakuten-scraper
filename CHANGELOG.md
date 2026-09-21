@@ -12,6 +12,55 @@ their output or their bill.
 
 ## [Unreleased]
 
+### Changed
+
+- **All four paid paths are now measured, and one README claim is
+  corrected.** A key and a Scraping Browser API endpoint arrived after
+  v0.1.0, so the paths that had shipped documented as unrun were run:
+
+  | Path | Result |
+  |---|---|
+  | Scraping Browser API (`--cdp-endpoint`, US exit) | 90 rows over 2 pages, `complete` |
+  | Proxy (`--proxy`, EU residential exit) | 90 rows over 2 pages, `complete` |
+  | `--fingerprint` | applied and served; 90 rows over 2 pages |
+  | 2Captcha Scraper API | HTTP 200, 1.09 MB, 45 products, $0.0005 |
+
+  > **The correction that matters:** v0.1.0 said a fingerprint was
+  > "actively counterproductive" on this site. It is not, and the
+  > measurement is narrower than the warning was. A fingerprint applied
+  > COMPLETELY — user agent, client hints, timezone, languages and platform
+  > together — is served. The run *without* it met the same 503 on page 1
+  > that the run with it did, so that throttle was request volume rather
+  > than the fingerprint. What Akamai refuses is a client that contradicts
+  > *itself*, which is why a bare user-agent override is refused and a
+  > complete identity is not. Corrected in the README, TROUBLESHOOTING.md,
+  > `.env.example`, `page_flow.block_advice` and the engine help.
+
+  `scraper_api_client.py`'s docstring likewise replaces "unverified on this
+  site" with the measurement and the price.
+
+### Added
+
+- **`navigator.languages` is now applied from the fingerprint.** The API
+  returns `intl.languages: ["en-US", "en"]` while Playwright's `locale=`
+  sets only the primary language, so the page reported `["en-US"]` — a
+  one-element list beside a two-element `Accept-Language`. Small, and this
+  is the site that punishes small contradictions specifically.
+- **A fixture fetched over `--cdp-endpoint`**, carrying the Scraping
+  Browser API extension's 16 injected captcha hunters, with six checks
+  pinning that the marker set scores zero against them WITHOUT relying on
+  the extension strip. `cf-turnstile` appears once in that page — on a page
+  holding the full catalogue — so carrying that marker, as this family's
+  own notes originally recommended, would report exit 3 on a good 1.1 MB
+  page. Controlled: adding it now fails three checks.
+
+  This is the fixture the family's notes ask for and a sibling repo lacked:
+  its equivalent guard ran only against a curl-fetched 404, which carries no
+  injection at all, so it passed for the wrong reason.
+- The widened signature-binding check now covers the credential-gated
+  modules, which is what stood in for a live run before the key arrived.
+  601 offline checks in total.
+
 ## [0.1.0] — 2026-09-21
 
 First release. Reads Rakuten Ichiba (`rakuten.co.jp`) listings and product
