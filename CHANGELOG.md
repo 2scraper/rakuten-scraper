@@ -12,6 +12,29 @@ their output or their bill.
 
 ## [Unreleased]
 
+### Fixed
+
+- Leftovers from the repos this one was bootstrapped from, none of which
+  changes behaviour:
+  - `.gitignore` and `.dockerignore` ignored another repo's output prefix
+    (`dubizzle_listings.*`) instead of this one's; they now ignore
+    `rakuten_products.*`, the engines' real `--out` default.
+  - The offline suite used another site's environment variable names in its
+    placeholder and proxy-line checks; it now uses `RAKUTEN_CDP_ENDPOINT`
+    and `RAKUTEN_PROXY`, the names `env_config.py` actually reads.
+  - The `run_meta()` docstring described a `--mode shop` and a seller's
+    review counts that this repo does not have; it now describes what
+    `extra` really carries here.
+  - A comment in the pyppeteer and Selenium engines explained single-page
+    handling through a shop mode that does not exist here.
+  - A privacy-check comment now names mediamarkt-scraper as the sibling it
+    describes.
+
+- `SECURITY.md` said this project has no releases or version tags; it has
+  both. "Supported versions" now names the latest release and `main`.
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.2.0] — 2026-09-21
 
 > **Changes behaviour for an existing consumer:** the Selenium and pyppeteer

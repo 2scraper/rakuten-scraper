@@ -15,8 +15,8 @@
 # real captures, verified to parse identically to them and scrubbed;
 # it has to be IN the repo or the suite cannot run on a clean clone.
 !fixtures_generated.json
-dubizzle_listings.*
-dubizzle_listings_*.*
+rakuten_products.*
+rakuten_products_*.*
 
 # --- the live-test harness's working directory ---------------------------
 # `--dump-html PATH` writes PATH.page1, PATH.page2, ... — FILES, not a
