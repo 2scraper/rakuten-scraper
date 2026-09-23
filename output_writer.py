@@ -446,13 +446,10 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     here, since the site has one storefront and one currency; it is kept
     because consumers read these columns by name across the family.
 
-    `extra` carries facts about the run that are not about any single row.
-    `--mode shop` uses it for the SELLER's own name, location, rating and
-    review count: a run covers exactly one shop, so those belong to the run
-    rather than repeated down a column, and the shop's review count (16679
-    on the captured seller) is a different number from its listings' own
-    (827 on one of them) — putting them in one column would make the schema
-    lie.
+    `extra` carries facts about the run that are not about any single row:
+    the language each page was served in, and the site's own cap arithmetic
+    for the query as page 1 states it. They belong to the run rather than
+    repeated down a column.
 
     `pages_failed` lists the pages that did not yield data, by number.
     `pages_completed` alone was enough only while pages were fetched strictly

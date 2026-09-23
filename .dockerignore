@@ -11,7 +11,7 @@ __pycache__/
 .venv/
 venv/
 env/
-dubizzle_listings.*
+rakuten_products.*
 *_debug.html
 *_debug.png
 live_results/
