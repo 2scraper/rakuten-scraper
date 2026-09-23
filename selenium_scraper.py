@@ -906,11 +906,10 @@ def scrape(args) -> int:
     blocked = False
     # Both modes are one row per product, so `sku` is the key for both.
     dedupe_key = "sku"
-    # Only --mode product is single-page. A SHOP FRONT paginates exactly like
-    # a category listing — ?page=N, the same tiles — and treating it as
-    # single-page made `--mode shop --pages 2` fetch one page and report
-    # "complete", which is the silent-success failure this family exists to
-    # avoid. Found on the first live shop run.
+    # Only --mode product is single-page: one item page. A listing
+    # paginates, so it must never be treated as single-page — that would
+    # fetch one page and report "complete", the silent-success failure this
+    # family exists to avoid.
     stop_reason = "completed"
 
     pool = proxy_pool_from_args(args)
