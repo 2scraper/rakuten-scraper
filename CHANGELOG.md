@@ -30,6 +30,11 @@ their output or their bill.
   - A privacy-check comment now names mediamarkt-scraper as the sibling it
     describes.
 
+- `SECURITY.md` said this project has no releases or version tags; it has
+  both. "Supported versions" now names the latest release and `main`.
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.2.0] — 2026-09-21
 
 > **Changes behaviour for an existing consumer:** the Selenium and pyppeteer
