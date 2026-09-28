@@ -1540,10 +1540,11 @@ def test_no_capture_leaks():
                 "(%d fixtures, %d chars)" % (len(names), len(fixtures)),
                 len(names) >= 8 and len(fixtures) > 300000)
     # Guarded with PATTERNS rather than with the literals a previous capture
-    # happened to contain, so the NEXT capture is checked too. MediaMarkt's
-    # pages embed a front-end configuration blob — a Sentry DSN, a Woosmap
-    # public key, a store-code JWT — none of which is needed to test a
-    # parser, and none of which belongs in a public repository.
+    # happened to contain, so the NEXT capture is checked too. On the sibling
+    # mediamarkt-scraper, the site's pages embed a front-end configuration
+    # blob — a Sentry DSN, a Woosmap public key, a store-code JWT — none of
+    # which is needed to test a parser, and none of which belongs in a
+    # public repository.
     patterns = {
         "a JWT": r"eyJ[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{10,}",
         "an access token": r"(?:access|auth|bearer)[_\-]?[Tt]oken\"?\s*[:=]\s*\"?[A-Za-z0-9._\-]{12,}",
@@ -2312,7 +2313,7 @@ def _placeholder_reads_unset(raw):
     are not already set, so writing a temporary .env would be shadowed by
     whatever the suite has already loaded.
     """
-    name = "CATAWIKI_CDP_ENDPOINT"
+    name = "RAKUTEN_CDP_ENDPOINT"
     saved = os.environ.get(name)
     try:
         os.environ[name] = raw
@@ -2530,7 +2531,7 @@ def test_proxy_pool():
               "SOMELOGIN-zone-custom-region-de:SOMEPASSWORD")
     raised = None
     try:
-        parse_proxy_line(pasted, source="CATAWIKI_PROXY")
+        parse_proxy_line(pasted, source="RAKUTEN_PROXY")
     except ProxyError as exc:
         raised = str(exc)
     ok &= check("a proxy-list line pasted as a URL is refused, not crashed on",
