@@ -12,6 +12,20 @@ their output or their bill.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-30
+
+> **The output files are now replaced atomically.** Before this release an
+> interrupted run could leave a shorter file where a complete one had been —
+> measured, a 2,084-byte good `out.json` came back 0 bytes and invalid JSON.
+> If you have ever seen a truncated output or sidecar, that was this.
+>
+> **CSV cells that begin `=`, `+`, `-`, `@`, tab, CR or LF now carry a
+> leading apostrophe**, so a spreadsheet reads them as text rather than as a
+> formula. The JSON output is unchanged and still carries the site's own
+> bytes; `csv_cells_escaped` in `<out>.meta.json` says how many cells the
+> two files differ in. On this site that number is 0 today — measured across
+> 2,662 stored rows — so no existing CSV changes.
+
 ### Fixed
 
 - **Output files are now replaced atomically.** `write_json`, `write_csv`
@@ -263,6 +277,7 @@ And two closed while building it:
   calling it page 1 of the run, so `--url '...?p=2' --pages 1` threw away 45
   perfectly good rows as "the end of the listing".
 
-[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.2.1
 [0.2.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.2.0
 [0.1.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.1.0
