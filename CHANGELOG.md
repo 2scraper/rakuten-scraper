@@ -14,6 +14,32 @@ their output or their bill.
 
 ### Fixed
 
+- **Output files are now replaced atomically.** `write_json`, `write_csv`
+  and `write_run_meta` each wrote with `open(path, "w")`, which truncates
+  before a single byte is written — so a crash, a kill or a full disk
+  halfway through left a shorter file where a complete one had been.
+  Reproduced before the fix: a 2,084-byte good `out.json` came back 0 bytes
+  and invalid JSON after an interrupted write. Each file is now written to a
+  temporary file in the same directory, `fsync`ed and renamed over the
+  target, so an interrupted run leaves the previous output intact. This is
+  the same promise `save()` already kept by refusing to overwrite good data
+  with an empty result, broken by a different route; the sidecar matters
+  most, being the file a consumer branches on.
+- **A CSV cell can no longer be read as a formula.** A cell beginning `=`,
+  `+`, `-`, `@`, tab, CR or LF is executed by a spreadsheet, and every
+  string in a row here is merchant-authored. Such cells are prefixed with an
+  apostrophe in the CSV only — the JSON still carries the site's own bytes —
+  and the new `csv_cells_escaped` field in `<out>.meta.json` declares how
+  many cells the two outputs therefore differ in. Only strings are escaped:
+  turning `-5` into text would break every sum a consumer writes over the
+  column. Measured on this site on 2026-09-30, 0 of 42,592 string cells
+  across 2,662 stored rows are formula-shaped, so this changes no output
+  today; a sibling site measured 1 cell in 454.
+- **CI now tests Python 3.13.** The README badge has claimed `3.9 | 3.13`
+  while the offline matrix ran 3.9 and 3.12 — the ceiling a reader sees
+  first was the one version nobody ran. The matrix is now the two ends the
+  badge names.
+
 - **Scraper API: `waitFor` is now sent as a JSON object.** It went out as a
   JSON-encoded string, following a docstring that said the API required one.
   Measured 2026-09-23 against `/tasks/sync`: the string form is refused with

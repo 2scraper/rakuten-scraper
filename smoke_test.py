@@ -1025,6 +1025,131 @@ def test_writers():
     return ok
 
 
+def test_atomic_writes():
+    group("output is replaced atomically, and a CSV cell cannot be a formula")
+    ok = True
+    import csv as _csv
+    # The module itself, not just its from-imported names: one check swaps a
+    # module global out to interrupt a write, and that needs the module.
+    import output_writer
+
+    with tempfile.TemporaryDirectory() as d:
+        pre = os.path.join(d, "out")
+        rows = [Product(sku="shop:item%d" % i, title="title %d" % i, url="u")
+                for i in range(40)]
+        output_writer.write_json(rows, pre + ".json")
+        good = os.path.getsize(pre + ".json")
+
+        # The failure this exists for, reproduced rather than asserted about:
+        # interrupt the encode halfway and the PREVIOUS good file must still
+        # be there. Measured before the fix: 2,084 bytes -> 0 bytes, invalid
+        # JSON. `open(path, "w")` truncates before writing a single byte.
+        class _Boom(Exception):
+            pass
+
+        real_asdict = output_writer.asdict
+        state = {"n": 0}
+
+        def _asdict_that_dies(r):
+            state["n"] += 1
+            if state["n"] > 20:
+                raise _Boom("simulated crash mid-write")
+            return real_asdict(r)
+
+        output_writer.asdict = _asdict_that_dies
+        try:
+            output_writer.write_json(rows, pre + ".json")
+            raised = False
+        except _Boom:
+            raised = True
+        finally:
+            output_writer.asdict = real_asdict
+
+        ok &= check("a crash during the write still raises", raised)
+        ok &= check("an interrupted write leaves the previous file whole",
+                    os.path.getsize(pre + ".json") == good)
+        try:
+            survived = len(json.load(open(pre + ".json", encoding="utf-8"))) == 40
+        except Exception:
+            survived = False
+        ok &= check("and that file is still valid JSON with all its rows",
+                    survived)
+        # A temp file left in the output directory after every failure is a
+        # slow leak in exactly the directory a user watches.
+        ok &= check("no temporary file is left behind",
+                    not [f for f in os.listdir(d) if f.endswith(".tmp")])
+
+        # Same guarantee for the sidecar, which matters more: it is the file
+        # a consumer branches on, so a truncated one beside good rows reads
+        # as a broken run over data that is fine.
+        for name, fn in (("write_json", output_writer.write_json),
+                         ("write_csv", output_writer.write_csv),
+                         ("write_run_meta", output_writer.write_run_meta)):
+            src = inspect.getsource(fn)
+            ok &= check("%s replaces its file atomically, never open(w)" % name,
+                        "_atomic(" in src and 'open(' not in src)
+
+        # The temp file has to be in the SAME directory: os.replace is only
+        # atomic within one filesystem.
+        atomic_src = inspect.getsource(output_writer._atomic)
+        ok &= check("_atomic writes its temp file beside the target",
+                    "dir=directory" in atomic_src)
+        ok &= check("_atomic fsyncs before renaming", "os.fsync" in atomic_src)
+        ok &= check("_atomic renames with os.replace", "os.replace" in atomic_src)
+
+        # --- CSV formula neutralisation ---------------------------------
+        r = Product(sku="shop:x", url="u",
+                    title='=HYPERLINK("http://evil","click")',
+                    shop_name="+cmd|'/c calc'!A1",
+                    price=-5.0)
+        escaped = output_writer.write_csv([r], pre + ".csv")
+        with open(pre + ".csv", newline="", encoding="utf-8") as f:
+            row = next(_csv.DictReader(f))
+        ok &= check("a formula-shaped string cell is prefixed",
+                    row["title"].startswith("'="))
+        ok &= check("every formula lead is covered, not just '='",
+                    row["shop_name"].startswith("'+"))
+        # Escaping a number would turn -5 into text and break every sum a
+        # consumer writes over the column. The risk is merchant-authored
+        # text; a numeric field of ours is not that.
+        ok &= check("a negative NUMBER is left alone", row["price"] == "-5.0")
+        ok &= check("write_csv returns how many cells it escaped", escaped == 2)
+
+        # The JSON keeps the site's bytes exactly as served: the two files
+        # deliberately differ, and the sidecar is what declares it.
+        output_writer.write_json([r], pre + ".json")
+        raw = json.load(open(pre + ".json", encoding="utf-8"))[0]
+        ok &= check("JSON is NOT escaped — it carries the site's own bytes",
+                    raw["title"].startswith("=HYPERLINK"))
+
+        rc = output_writer.finish_run(
+            [r], pre, "both", False, blocked=False, stop_reason="completed",
+            pages_requested=1, pages_completed=1, start_url="u", final_url="u")
+        meta = json.load(open(pre + ".meta.json", encoding="utf-8"))
+        ok &= check("the escape count reaches the sidecar",
+                    meta.get("csv_cells_escaped") == 2 and rc == 0)
+
+        # Declared as 0 rather than omitted: absent would be indistinguishable
+        # from an older run written before this existed.
+        output_writer.finish_run(
+            rows, pre, "both", False, blocked=False, stop_reason="completed",
+            pages_requested=1, pages_completed=1, start_url="u", final_url="u")
+        meta = json.load(open(pre + ".meta.json", encoding="utf-8"))
+        ok &= check("a run that escaped nothing still says so",
+                    meta.get("csv_cells_escaped") == 0)
+
+        # An engine's own extras must win a collision: this code dropping a
+        # site value to record a housekeeping count would be the worse bug.
+        output_writer.finish_run(
+            rows, pre, "both", False, blocked=False, stop_reason="completed",
+            pages_requested=1, pages_completed=1, start_url="u", final_url="u",
+            extra={"csv_cells_escaped": "engine wins"})
+        meta = json.load(open(pre + ".meta.json", encoding="utf-8"))
+        ok &= check("a caller's own extra is not overwritten",
+                    meta.get("csv_cells_escaped") == "engine wins")
+    return ok
+
+
 def test_finish_run():
     group("finish_run: the exit codes all three engines must agree on")
     ok = True
@@ -3749,6 +3874,7 @@ def main() -> int:
     ok &= test_page_flow()
     ok &= test_output_contract()
     ok &= test_writers()
+    ok &= test_atomic_writes()
     ok &= test_finish_run()
     ok &= test_diff()
     ok &= test_captcha()
