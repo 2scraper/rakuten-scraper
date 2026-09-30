@@ -15,9 +15,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the floor the README claims. Claiming it without testing it is
-        # how a walrus operator or a `X | None` annotation ships and breaks it.
-        python-version: ["3.9", "3.12"]
+        # The oldest and the newest the README claims, both ends tested.
+        # 3.9 is the floor: claiming it without testing it is how a walrus
+        # operator or a `X | None` annotation ships and breaks it. 3.13 is the
+        # ceiling, and it was on the badge while CI tested 3.12 — a version
+        # nobody ran, promised in the one place a reader looks first.
+        python-version: ["3.9", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

@@ -223,9 +223,32 @@ Three columns are worth explaining because this site is unusual:
 A run that finds nothing **writes nothing** — `--allow-empty` is the opt-out
 — so a failed run cannot replace last night's good output with `[]`.
 
+**All three files are replaced atomically.** Each is written to a temporary
+file beside it and renamed over the old one, so a crash, a kill or a full
+disk leaves the previous run's output exactly as it was rather than a
+half-written file where a complete one had been. Measured before the fix: a
+2,084-byte good `out.json` came back **0 bytes and invalid JSON** after an
+interrupted write, because `open(path, "w")` truncates before writing a
+single byte. That matters most for the sidecar, which is the file a consumer
+branches on.
+
 Every run also writes `<out>.meta.json`, and on this site it carries the
 site's own arithmetic as well as the status. See
 [complete is not exhaustive](#complete-is-not-exhaustive).
+
+**A CSV cell cannot be a formula.** A spreadsheet executes a cell beginning
+`=`, `+`, `-` or `@`, and every string here was written by a merchant, not by
+this code. Such a cell is prefixed with an apostrophe in the **CSV only** —
+the JSON keeps the site's bytes exactly as served — and `csv_cells_escaped`
+in the sidecar declares how many cells the two files therefore differ in.
+Only strings are touched: escaping a number would turn `-5` into text and
+break every sum written over the column.
+
+This does not fire on today's data and is not claimed to. Measured
+2026-09-30: **0 of 42,592 string cells across 2,662 stored rows** begin with
+any of those characters. It is here because a Rakuten title routinely opens
+with a discount badge, and `-16%OFF ...` is one merchant away from being a
+leading minus.
 
 ## Where the data actually is
 
