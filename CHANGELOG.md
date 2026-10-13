@@ -12,6 +12,23 @@ their output or their bill.
 
 ## [Unreleased]
 
+> **Behaviour change:** `--retries 0` is now a usage error (exit 2). It used
+> to be accepted and made the page-load loop unreachable, so nothing was
+> fetched and the engine reported the browser's own blank page as a result:
+> exit 3 or 4 with a 39-byte "capture", in tens of milliseconds. If a
+> script of yours passes 0, pass **1**: the flag counts ATTEMPTS, so 1 means
+> "try once and do not retry".
+
+### Fixed
+
+- **`--retries 0` fetched nothing and called it a result.** The load loop is
+  `range(1, retries + 1)`, so 0 never runs it and the engine judged
+  `about:blank`. Three third-party audits of this family ran exactly that and
+  reported a working scraper as broken. `--retries` now goes through
+  `page_flow.attempts` in every entry point; a check reads the source of each
+  one and calls the validator, so a new engine declaring the flag with a
+  plain int fails the suite.
+
 ## [0.2.1] — 2026-09-30
 
 > **The output files are now replaced atomically.** Before this release an
