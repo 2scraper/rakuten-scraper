@@ -128,7 +128,7 @@ class PageOutcome:
     # Rakuten's own arithmetic about the query: total_results,
     # pages_available, reachable_max, capped_by_site, pages_beyond_cap. In
     # the sidecar because on this site "complete" and "exhaustive" are wildly
-    # different words and a status alone would be lying by omission (§21).
+    # different words and a status alone would be lying by omission.
     cap: Optional[dict] = None
     # Whether the SERVER served the page we asked for, read off
     # `pagination.start` rather than trusted from the request. False means
@@ -236,7 +236,7 @@ class _Session:
             # APPLIED, not merely accepted. A flag that is declared and then
             # never read is worse than a flag that is absent: it looks
             # configurable and is not, which is the defect this family keeps
-            # finding in its own copied core (§17).
+            # finding in its own copied core.
             options.add_argument(f"--lang={self.args.locale}")
             options.add_experimental_option(
                 "prefs", {"intl.accept_languages": self.args.locale})
@@ -378,7 +378,7 @@ def _parse_for_mode(html: str, url: str, args, page_num: int = 1) -> List:
     `page_num` is threaded through rather than defaulted, because `position`
     restarts at 1 on every page: without the page number beside it, a row
     from page 2 claims the same position as one from page 1 and the two are
-    indistinguishable in the output (§18).
+    indistinguishable in the output.
 
     `currency` comes from page 1 and is carried forward, because Rakuten
     publishes the JSON-LD block that states it on PAGE 1 ONLY — 1 block on
@@ -433,16 +433,19 @@ def _next_page_candidates(session, page_num: int) -> List[str]:
                                           hrefs or [])
 
 
-def handle_captcha_if_present(session, args) -> bool:
+def handle_captcha_if_present(session, args, purchases=None) -> bool:
     """Detect and solve a challenge. True if something was solved.
+
+    `purchases` works as in the Playwright engine: one entry is appended
+    just before the solver is asked for a token.
 
     Same detectors, same reconciliation and the same "detected is not
     blocking" rule as the Playwright engine — the three must agree about
     when a run spends money.
 
-    NOTE what this cannot help with: this site's refusal is an HTTP 403 with
-    403 carrying its own error page with no challenge on it, so no solve
-    applies there and none is attempted. See product_parser.detect_page_state.
+    NOTE what this cannot help with: this site's refusals (a 43-byte Akamai
+    deny, a branded page under HTTP 403 or 503) carry no challenge, so no
+    solve applies there and none is attempted. See product_parser.detect_page_state.
     """
     driver = session.driver
     d = _driver(session)
@@ -471,6 +474,8 @@ def handle_captcha_if_present(session, args) -> bool:
     if not args.twocaptcha_key:
         logger.warning("No 2captcha API key, so this challenge cannot be solved.")
         return False
+    if purchases is not None:
+        purchases.append(challenge.kind)
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
                                 api_version=args.captcha_api,
@@ -565,15 +570,23 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # second call site, so `SOLVES_PER_PAGE = 1` read like an enforced
         # cap in every repo of this family while one page could buy two
         # solves — measured at three on a site where a challenge rendered on
-        # every fetch (§23). Invisible wherever a challenge is rare, which
+        # every fetch. Invisible wherever a challenge is rare, which
         # is everywhere until it is not.
         if page_flow.solve_budget(solves_bought):
-            if handle_captcha_if_present(session, args):
-                solves_bought += 1
+            # Counted per ATTEMPTED purchase, as in the Playwright engine.
+            purchases = []
+            solved = handle_captcha_if_present(session, args,
+                                               purchases=purchases)
+            solves_bought += len(purchases)
+            if solved:
                 time.sleep(1)
 
         html = d["content"]() or ""
-        state = page_flow.classify(html, url=d["current_url"]())
+        # `driver.get()` returns nothing and WebDriver exposes no response
+        # status, so None is passed on purpose: the classifier then reads
+        # Rakuten's branded refusal body as the recoverable state (a
+        # throttle), which costs a wait rather than a wasted rotation.
+        state = page_flow.classify(html, None, url=d["current_url"]())
 
         # "Not painted yet" is not a fault, and on this site it is also
         # not the usual case: a listing page carries all 45 of its products
@@ -596,12 +609,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 logger.info("The grid still had not painted after %.0fs "
                             "(%d match(es)).", wait_s, found)
             html = d["content"]() or html
-            state = page_flow.classify(html, url=d["current_url"]())
+            state = page_flow.classify(html, None, url=d["current_url"]())
 
         # No interstitial-settling step, and its absence is measured rather
         # than an omission: this site has no interstitial. A refused request
-        # gets a 394-byte "Access Denied" with nothing on it to settle, and
-        # what triggers it is the browser being headless, not the address. See page_flow's "There is no block page".
+        # gets a 43-byte deny or a branded 403 page, neither of which has
+        # anything on it to settle; a 503 throttle is handled below by
+        # waiting at the same exit.
         #
         # The paid path is reached only for state "challenge", which no
         # capture of this site has ever produced. Wired up because a bot
@@ -613,7 +627,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             if handle_captcha_if_present(session, args):
                 time.sleep(1)
                 html = d["content"]() or html
-                state = page_flow.classify(html, url=d["current_url"]())
+                state = page_flow.classify(html, None, url=d["current_url"]())
                 if state == "content":
                     logger.info("The solve was accepted — page %d is content "
                                 "now.", page_num)
@@ -695,10 +709,11 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     outcome.state = state
 
     if state == "blocked":
-        # There is no challenge on this site to solve. Akamai answers a
-        # refused request with HTTP 403 and a 394-byte "Access Denied" that
-        # carries a reference id and nothing else, so a 2Captcha key does not
-        # help and a REAL WINDOW does — not a better address. The dump is written even when empty: "0 bytes" is itself
+        # There is no challenge on this site to solve. Akamai's refusals here
+        # (a 43-byte HTTP-200 deny, or a branded page under HTTP 403) carry a
+        # reference id and nothing else, so a 2Captcha key does not help; a
+        # consistent client usually does, not a better address. The dump is
+        # written even when empty: "0 bytes" is itself
         # the diagnosis here.
         debug_html = f"{args.out}_page{page_num}_debug.html"
         with open(debug_html, "w", encoding="utf-8") as f:
@@ -707,8 +722,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
             "The site did not serve this request — %d bytes, %s the site's "
             "own asset host, saved to %s. Akamai refuses this site with a "
             "43-byte body whose whole content is `Reference  #18.\u2026`, and "
-            "it arrives under HTTP **200** — so the status code is not the "
-            "signal and there is no widget on the page for any solver. What "
+            "it arrives under HTTP 200; a route Rakuten refuses outright "
+            "answers with its branded page under HTTP 403. Neither carries a "
+            "widget for any solver. What "
             "clears it is usually NOT a different address, measured "
             "2026-09-21: one datacentre IP was served the full 45-product "
             "page both by plain curl and by headless Chromium, and refused "
@@ -801,7 +817,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # out-of-range route on this site fails in a way the client can see:
     # `?p=151` of a 150-page query answers 301 to page 1 and then HTTP 200
     # with 45 real products, and `/category/{id}/?p=2` answers 200 with page
-    # 1 without even redirecting (§23).
+    # 1 without even redirecting.
     if args.mode == "listing":
         # Compared against the page the fetched URL actually ASKS for, not
         # against the loop's counter — a run started on a URL that already
@@ -1148,16 +1164,16 @@ def parse_args():
                         "grid, so it would need a parser written against "
                         "markup nobody has captured.")
     p.add_argument("--category", default=None, help="Label to tag output rows with.")
-    p.add_argument("--pages", type=int, default=1, help="Listing pages to crawl")
-    p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--pages", type=page_flow.at_least_one, default=1, help="Listing pages to crawl")
+    p.add_argument("--delay", type=page_flow.non_negative_seconds, default=2.0, help="Delay between pages, seconds")
+    p.add_argument("--concurrency", type=page_flow.at_least_one, default=1, metavar="N",
                    help="Accepted for flag parity and IGNORED here: parallel "
                         "page fetching lives in playwright_scraper.py.")
     p.add_argument("--retries", type=page_flow.attempts, default=3,
                    help="Attempts per page load before giving up (default 3). "
                         "A page that comes back EMPTY is not retried: an empty "
                         "hub category is a correct answer, not a fault.")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=page_flow.non_negative_seconds, default=2.0,
                    help="Seconds before the first retry, doubling thereafter")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="rakuten_products", help="Output file prefix")
@@ -1171,7 +1187,7 @@ def parse_args():
                         "Wins over --proxy.")
     p.add_argument("--proxy-rotate", choices=list(ROTATE_MODES), default="per-run")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int,
+    p.add_argument("--proxy-block-retries", type=page_flow.non_negative_int,
                    default=page_flow.BLOCK_RETRIES_WITH_POOL,
                    help="When a page comes back refused, retry it from this "
                         "many OTHER exits before giving up (default %d, from "
@@ -1220,10 +1236,12 @@ def parse_args():
                    help="when-blocked (default): only pay to solve a "
                         "reCAPTCHA if the content is not already readable. "
                         "always: solve whenever one is detected. Note that "
-                        "NO challenge has ever been observed on this site — a "
-                        "refused request gets no page at all — so neither "
-                        "setting has anything to act on today, and neither "
-                        "helps with a refusal.")
+                        "NO challenge has ever been observed on this site. "
+                        "Rakuten's refusals (a 43-byte Akamai deny under "
+                        "HTTP 200, a branded page under HTTP 403, the same "
+                        "page under HTTP 503 as a rate limit) carry no "
+                        "widget, so neither setting helps with them and no "
+                        "solve is attempted or billed.")
     p.add_argument("--min-score", type=float, default=0.7)
     p.add_argument("--cdp-endpoint", default=None,
                    help="Attach to a running browser at host:port. Must NOT "
@@ -1233,13 +1251,8 @@ def parse_args():
     p.add_argument("--dump-html", default=None, metavar="PATH",
                    help="Save the exact HTML the parser is given, on success "
                         "as well as failure.")
-    # HEADFUL by default, a departure from every sibling repo and a measured
-    # one: Akamai refuses a headless browser here whatever the exit -- HTTP
-    # 403 and a 394-byte "Access Denied" from four residential exits and one
-    # datacentre address, against 200 and the full catalogue from those same
-    # addresses with a real window.
     # HEADLESS is the default, and here that is measured in BOTH
-    # directions rather than inherited (§19). On 2026-09-21 from one
+    # directions rather than inherited. On 2026-09-21 from one
     # datacentre address the answer was PER-ROUTE:
     #
     #   search / item / category   headless 200 with the payload

@@ -20,10 +20,11 @@ name: canary
 # kind: a keyword search returned 45 products a page, and a three-page run
 # returned 135 rows with 100% price coverage and status `complete`.
 #
-# The family's rule is that a canary which CANNOT pass must skip rather than
-# fail, because a check that is always red teaches everyone to ignore checks.
-# The other half of that rule applies here: a canary that CAN pass without a
-# credential must never be gated on one.
+# A canary that CAN pass without a credential must never be gated on one,
+# and a run that did not actually test the site must never end green: a
+# block (exit 3), a partial run (exit 6), content never obtained (exit 5) or
+# zero rows all fail the job. A green badge here means a real scrape of
+# rakuten.co.jp parsed real rows today, and nothing less.
 #
 # What a runner cannot test, and why there is no second job for it:
 #
@@ -99,40 +100,28 @@ jobs:
 
       - name: Interpret the exit code
         id: verdict
-        # ACCESS CONDITIONS ARE NOT DEFECTS. Failing the job on any non-zero
-        # exit would make the canary red for things that are nobody's bug —
-        # so 3 (blocked) and 6 (partial) are WARNINGS, while a run that got
-        # in and found the wrong thing stays red.
-        #
-        # Note that on THIS site a blocked canary is genuinely surprising
-        # rather than routine, because the listing routes are not gated. If
-        # exit 3 starts appearing every day, that is news: either Rakuten has
-        # begun refusing GitHub's address ranges, or something in this repo
-        # has started sending a client whose claimed identity and TLS
-        # fingerprint disagree — which is the one thing Akamai was measured
-        # to refuse here.
+        # EVERY NON-ZERO EXIT FAILS THE JOB. This canary needs no secret and
+        # the listing routes were measured ungated from datacentre
+        # addresses, GitHub's runners included, so a run that did not get in
+        # is news rather than an access condition to wave through. The
+        # messages differ only in where to look first.
         run: |
           set -e
           code="${{ steps.run.outputs.exit_code }}"
-          tested=true
           case "$code" in
             0)
               echo "OK — products parsed from a live run." ;;
             3)
-              tested=false
-              echo "::warning::Blocked before parsing (exit 3) — reported as an ACCESS condition rather than a code defect, so this run is not failed. On this site that is NOT routine: the listing routes were measured ungated from a datacentre address. Check canary_run_page1_debug.html — if it is 43 bytes of 'Reference  #', Akamai refused the client, and the first thing to suspect is a user agent or fingerprint that disagrees with the TLS handshake underneath it, not the address."
-              echo "### Canary did NOT test anything (exit 3, blocked)" >> "$GITHUB_STEP_SUMMARY"
-              echo "The site did not serve the request, so the parser was not exercised. Unusual here — see TROUBLESHOOTING.md, first section." >> "$GITHUB_STEP_SUMMARY" ;;
+              echo "::error::Blocked before parsing (exit 3). The listing routes were measured ungated from datacentre addresses, so this is news: either Rakuten has begun refusing GitHub's address ranges, or this repo has started sending a client whose claimed identity and TLS fingerprint disagree. Check canary_run_page1_debug.html — 43 bytes of 'Reference  #' is Akamai refusing the client; a branded page under HTTP 403 is a route refusal."
+              exit 1 ;;
             6)
-              tested=false
-              echo "::warning::Partial run (exit 6) — some pages were gathered and the run then stopped early. canary_run.meta.json names which pages failed. If the sidecar says stop_reason=end_of_listing this is not partial at all and the code is wrong; if it repeats every day, suspect the ?p= convention."
-              echo "### Canary tested only PART of the run (exit 6)" >> "$GITHUB_STEP_SUMMARY"
-              echo "See \`pages_failed\` in the sidecar artefact." >> "$GITHUB_STEP_SUMMARY" ;;
+              echo "::error::Partial run (exit 6): some pages were gathered and the run then stopped early, so the run did not test what it was asked to. canary_run.meta.json names which pages failed. If stop_reason is end_of_listing this is not partial at all and the code is wrong; a stop_reason of blocked_* or a throttle that never cleared means the site refused part of the run."
+              exit 1 ;;
             4)
               echo "::error::Ran fine but parsed 0 rows (exit 4) from a genre listing that holds 45 products per page. Either window.__INITIAL_STATE__.state.data.ichibaSearch has moved, or the item-URL pattern the DOM fallback anchors on has. This is the regression this canary exists to catch — the HTML dump in the artefacts tells you which."
               exit 1 ;;
             5)
-              echo "::error::Remote API error (exit 5) from a run that uses no remote API. That should be impossible here; read the log."
+              echo "::error::The content was never obtained (exit 5): a navigation timeout, a transport failure or a page that parsed to nothing although the site stated rows. This run uses no remote API and no credential, so diagnose the transport and the dump; the log names the stop_reason."
               exit 1 ;;
             2)
               echo "::error::Bad usage (exit 2) — the workflow's own arguments are wrong, not the site."
@@ -141,7 +130,7 @@ jobs:
               echo "::error::The scraper crashed (exit $code)."
               exit 1 ;;
           esac
-          echo "tested=$tested" >> "$GITHUB_OUTPUT"
+          echo "tested=true" >> "$GITHUB_OUTPUT"
 
       - name: Check what the run actually produced
         if: steps.verdict.outputs.tested == 'true'
@@ -197,7 +186,7 @@ jobs:
                "this site is a mall; shop_code came from the payload on "
                "every measured row")
 
-          # THE ARITHMETIC BUG §18 NAMES: position restarts per page, so the
+          # THE ARITHMETIC BUG: position restarts per page, so the
           # pair is what has to be unique.
           pairs = [(r.get("page"), r.get("position")) for r in rows]
           dupes = [p for p, n in collections.Counter(pairs).items() if n > 1]
@@ -218,7 +207,7 @@ jobs:
                        and not r.get("review_count") for r in rows))
 
           # NO NEGATIVE DISCOUNTS. Costs one line and catches the regression
-          # forever (§4).
+          # forever.
           want("a row has an original_price at or below its price",
                not any(r.get("original_price") is not None
                        and r.get("price") is not None

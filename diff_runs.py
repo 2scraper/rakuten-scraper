@@ -160,8 +160,7 @@ def diff_products(old: List[dict], new: List[dict],
     # those sponsored entries never become rows at all: they carry a
     # click-tracking redirect instead of a product URL and `parse_products`
     # drops them. So there is no placement column for a lifecycle bucket to
-    # key on, and porting one would be dead code that looks load-bearing
-    # (§4).
+    # key on, and porting one would be dead code that looks load-bearing.
     changed, source_changed, within_tolerance = [], [], []
     for sku in old_by_sku.keys() & new_by_sku.keys():
         before, after = old_by_sku[sku], new_by_sku[sku]

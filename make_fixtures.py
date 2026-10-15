@@ -162,7 +162,7 @@ def _scrub_obj(node):
                 # a public URL. Not a credential and not secret — and it
                 # trips every scanner that looks for a 32-hex string,
                 # including this repo's own CI grep, which would greet a new
-                # user with a FAILED line on their first command (§23).
+                # user with a FAILED line on their first command.
                 #
                 # Scrubbed rather than allowlisted, because an allowlist
                 # that forgives 32-hex inside a rakuten.co.jp URL is a hole
@@ -245,7 +245,7 @@ def _minimal_listing(text, keep):
             text, re.S):
         ld += block
     # THE SCRAPING BROWSER'S OWN EXTENSION TAGS, kept verbatim when the
-    # capture has them. This is the fixture §21 asks for: a guard is only as
+    # capture has them. This is the fixture the guard needs: a guard is only as
     # good as the fixture it runs against, and the one that matters is the
     # page fetched the way a real run fetches it.
     #

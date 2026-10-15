@@ -201,7 +201,37 @@ def detect_recaptcha_v3(html: str, page_url: str) -> Optional[CaptchaChallenge]:
             )
 
     if "grecaptcha" not in html:
-        return None
+        # A rendered v2 widget can reach a saved page without the literal
+        # `grecaptcha` anywhere in it: only the hyphenated container class
+        # `g-recaptcha` with its `data-sitekey`, or the widget's own
+        # `api2/anchor` iframe carrying the key as `k=`. Bailing here
+        # misdiagnosed such a `--dump-html` capture as "no captcha".
+        # A challenge frame present settles the variant as v2: v3 renders
+        # no challenge frame at all.
+        anchor = re.search(
+            r"recaptcha/(?:api2|enterprise)/anchor\?[^\"'>]*?[?&]k=([\w-]{20,})",
+            html)
+        container = re.search(
+            r"<[^>]*class=[\"'][^\"']*\bg-recaptcha\b[^>]*>", html, re.IGNORECASE)
+        key = None
+        size = None
+        if container:
+            km = re.search(r"data-sitekey=[\"']([\w-]{20,})[\"']",
+                           container.group(0))
+            sm = re.search(r"data-size=[\"'](\w+)[\"']", container.group(0))
+            key = km.group(1) if km else None
+            size = sm.group(1) if sm else None
+        if key is None and anchor:
+            key = anchor.group(1)
+            sm = re.search(r"[?&]size=(\w+)",
+                           html[anchor.start():anchor.start() + 600])
+            size = size or (sm.group(1) if sm else None)
+        if key is None:
+            return None
+        kind = ("recaptcha_v2_invisible" if size == "invisible"
+                else "recaptcha_v2")
+        return CaptchaChallenge(kind=kind, sitekey=key, page_url=page_url,
+                                size=size)
 
     exec_match = re.search(
         r"grecaptcha\.execute\(\s*['\"]([\w-]{20,})['\"]\s*,\s*\{\s*action:\s*['\"]([\w_]+)['\"]",
@@ -723,14 +753,15 @@ solve_recaptcha_v3 = solve_recaptcha
 # a JPEG of distorted text and a GET form). Roughly 190 lines of it, and none
 # of it is ported here, because this site has no such page.
 #
-# What this site does instead is refuse a HEADLESS browser. Measured
-# 2026-09-10 from five different addresses, four of them residential: Akamai
-# answers with HTTP 403 and a 394-byte "Access Denied" page carrying a
-# reference id — no form, no image, no widget, nothing for a solver to
-# answer. And the trigger is the CLIENT rather than the address: the very
-# same addresses were served HTTP 200 and the full catalogue by a browser
-# with a real window. So the response to a block here is `--headful` or
-# `--cdp-endpoint`, not a solve and not a better proxy, and
+# What this site does instead is refuse the CLIENT. Measured 2026-09-21
+# from one datacentre address: Akamai answers a client whose claimed
+# User-Agent contradicts its TLS fingerprint with a 43-byte HTTP-200 body
+# holding only a reference id, and the ranking route answers a headless
+# browser with a branded HTTP-403 page — no form, no image, no widget,
+# nothing for a solver to answer on either. The same address was served the
+# full catalogue by plain curl and by a consistent browser. So the response
+# to a block here is a consistent client (or `--headful` on the ranking
+# route), not a solve and not a better proxy, and
 # product_parser.detect_page_state reports it as "blocked" rather than
 # "challenge" precisely so no solve is attempted and nothing is charged.
 #

@@ -119,7 +119,7 @@ class Product:
     # ブランド. Populated on 240 of 405 measured rows (59%).
     #
     # `hit["brand"]` — the field that looks like the source — is null on
-    # 405 of 405 and would make this a dead column (§9). Deliberately NOT
+    # 405 of 405 and would make this a dead column. Deliberately NOT
     # derived by splitting the title: a Rakuten product name opens with
     # campaign text (`【9/24まで P10倍！】`) far more often than with a maker,
     # so a split would be a guess wearing a fact's clothes.
@@ -137,7 +137,7 @@ class Product:
     # 405 rows), so the value comes from the page's own structured data:
     # `offers.priceCurrency` in the listing page's JSON-LD, or
     # `<meta itemprop="priceCurrency">` on a detail page. Null rather than
-    # defaulted when a page states nothing (§4).
+    # defaulted when a page states nothing.
     currency: Optional[str] = None
     # The was-price, and ONLY where Rakuten's own
     # `doublePrice.referencePriceVerified` flag is true — Japan's
@@ -335,6 +335,18 @@ def _atomic(path: str, newline: Optional[str] = None):
             yield handle
             handle.flush()
             os.fsync(handle.fileno())
+        # NamedTemporaryFile creates the file 0600 and os.replace keeps that
+        # mode, so without this every output would be owner-only. A file that
+        # already exists keeps its own mode; a new one gets what a plain
+        # open(path, "w") would have given it, i.e. 0666 minus the umask.
+        # Never a flat 0644: under umask 002 that would narrow 0664.
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(handle.name, mode)
         os.replace(handle.name, path)
     except BaseException:
         try:
@@ -436,27 +448,20 @@ EXIT_NO_PRODUCTS = 4
 # search genuinely matched nothing" from "something stood between us and the
 # content". See product_parser.detect_bot_challenge.
 #
-# On this site this code specifically does NOT cover the three ways to get a
-# real page with no products on it: a `/p/<slug>` discovery hub, which
-# answers 200 with banners and carousels and no grid; a search whose query
-# matches nothing ("Oops, produk nggak ditemukan"); and one page past the
-# end of a category listing. All three are EXIT_NO_PRODUCTS — the request
-# was served exactly as asked and simply has no products on it. Reporting
-# any of them as blocked would send a user hunting for a proxy problem that
-# does not exist.
+# On this site this code specifically does NOT cover a real page with no
+# products on it: a search whose query matches nothing, or a genre with no
+# items. Those are EXIT_NO_PRODUCTS — the request was served exactly as
+# asked and simply has no products on it. Reporting either as blocked would
+# send a user hunting for a proxy problem that does not exist.
 #
-# What EXIT_BLOCKED means here is unusually literal: this site refuses a
-# address it has scored NOTHING at all. No status code, no interstitial, no
-# vendor marker — the HTTP/2 stream is reset and the run sees a connection
-# error rather than a page.
+# What EXIT_BLOCKED means on Rakuten is one of two refusals, both carrying
+# Akamai's reference id: a tiny HTTP-200 deny (about 43 bytes, given to a
+# client whose claimed User-Agent contradicts its TLS fingerprint), or a
+# branded refusal page under HTTP 403. The same branded body under HTTP 503
+# is a THROTTLE, not a block: it is waited out at the same exit, and only
+# counts here if it never clears.
 EXIT_BLOCKED = 3
 
-# Exit code for a run that gathered SOME rows and then stopped early — a
-# page-load timeout, a 503 throttle, or a challenge on page 3 of 10. The
-# output file is still written (throwing away three good pages would be
-# worse), but it is not a complete picture, and a consumer that cannot tell
-# the difference will read the pages that were never fetched as products that
-# disappeared from the catalogue. See write_run_meta.
 # A REMOTE service failed — the Scraping Browser refusing the connection
 # (`profile_locked` is the common one: a profile allows a single live
 # connection), or the Scraper API answering an error. Distinct from 1 (a
@@ -467,6 +472,12 @@ EXIT_BLOCKED = 3
 # drifts.
 EXIT_API_ERROR = 5
 
+# Exit code for a run that gathered SOME rows and then stopped early — a
+# page-load timeout, a 503 throttle that never cleared, or a refusal on page
+# 3 of 10. The output file is still written (throwing away three good pages
+# would be worse), but it is not a complete picture, and a consumer that
+# cannot tell the difference will read the pages that were never fetched as
+# products that disappeared from the catalogue. See write_run_meta.
 EXIT_PARTIAL = 6
 
 

@@ -34,7 +34,7 @@ fingerprint that gets refused on the SECOND navigation but not the first,
 which is exactly the shape of the worst bug found while building this repo -
 the pyppeteer engine's UA override, served on nav 1 and denied on navs 2-4.
 `compileall` passed, `--help` worked, every check here was green, and only a
-live two-page run found it. Run one (§15).
+live two-page run found it. Run one.
 """
 import ast
 import builtins
@@ -119,14 +119,30 @@ def _raises(fn):
     return False
 
 
+# Assembled from pieces so this file can be scanned like every other one
+# rather than exempted: the suite is the file most likely to pick up a
+# stray phrase, and an exemption would hide it.
 BANNED_PHRASES = (
-    "cloud browser",
-    "antidetect browser",
-    "anti-detect browser",
-    "2scraper Antidetect Browser",
-    "gate.2prx.com",
-    "2prx.com",
+    "cloud" + " browser",
+    "anti" + "detect browser",
+    "anti-" + "detect browser",
+    "2scraper " + "Anti" + "detect Browser",
+    "gate." + "2prx" + ".com",
+    "2prx" + ".com",
 )
+
+# References to private material that the public cannot open: the family's
+# internal notes and their section numbers. A rule belongs in this repo in
+# its own words. Assembled from pieces for the same reason as above.
+PRIVATE_CITATIONS = (
+    "CLAUDE" + ".md",
+    "claude_" + "2scraper",
+    "2scraper_" + "repo_rules",
+)
+PRIVATE_SECTION_RE = re.compile(chr(0xA7) + r"\s?\d")
+# Site data captured verbatim, where a section sign could be Rakuten's own.
+CITATION_SCAN_SKIP = ("fixtures_generated.json", "sample_output.json",
+                      "sample_output.csv")
 
 # Flags that were removed and must stay removed. Scoped to the ENGINES:
 # `--country` is banned on a scraper here -- the locale is a path segment, so
@@ -137,7 +153,7 @@ ENGINE_FILES = ("playwright_scraper.py", "puppeteer_scraper.py",
                 "selenium_scraper.py")
 
 # A fingerprint as the 2Captcha API really returns one, with this site's
-# region. Kept as a fixture because three of the six defects §16 lists were
+# region. Kept as a fixture because three of the six defects once found in the copied fingerprint client were
 # one wrong key each in exactly this structure -- `userAgent.value` where the
 # API says `userAgent.userAgent`, a locale built as `en-{country}`, a
 # timezone never applied at all.
@@ -260,7 +276,7 @@ def test_price_parsing():
     ok &= check("no separator", price_in("1234円") == 1234)
     ok &= check("large amount", price_in("￥1,234,567") == 1234567)
     # JPY has NO subunit, so a comma is always a thousands separator here and
-    # §4's "whichever of dot and comma comes last is the decimal point" rule
+    # the "whichever of dot and comma comes last is the decimal point" rule
     # does not apply. `1,234` is 1234 and never 1.234.
     ok &= check("a comma is never a decimal point in JPY",
                 price_in("￥1,234") == 1234.0)
@@ -290,7 +306,7 @@ def test_price_parsing():
 
 
 # ---------------------------------------------------------------------------
-# Rows: VALUES on real fixtures, not coverage (§10)
+# Rows: VALUES on real fixtures, not coverage
 # ---------------------------------------------------------------------------
 def test_listing_values():
     group("listing rows: VALUES on real fixtures, not coverage")
@@ -298,7 +314,7 @@ def test_listing_values():
     # Pinned figures, not a coverage percentage. A column can be 100%
     # populated and entirely wrong — a sibling repo shipped a review_count
     # of 445279961 on every row of every mode while its coverage check said
-    # 100% (§10).
+    # 100%.
     rows = fx_rows("search_p1")
     first = rows[0]
     ok &= check("search fixture parses its products", len(rows) >= 6)
@@ -378,12 +394,12 @@ def test_measured_absences():
                 all(r.discount_pct is None for r in rows))
     # `in_stock` is True on every listing row because this search EXCLUDES
     # sold-out products rather than marking them. Pinned as the known
-    # limitation §10 asks for rather than half-guarded: a False here is
+    # limitation, pinned rather than half-guarded: a False here is
     # unproven, and the detail route is the source that can say otherwise.
     ok &= check("in_stock is True on every listing row (the search excludes "
                 "sold-out items; a False here is unproven)",
                 all(r.in_stock is True for r in rows))
-    # A column that is null on every row of every run should not exist (§9).
+    # A column that is null on every row of every run should not exist.
     # These are populated on the DETAIL route, which is why they stay.
     detail = parse_product_page(*_fx_detail("item_discounted"))
     ok &= check("variant_count is null on listings and populated on a detail "
@@ -434,7 +450,7 @@ def test_jsonld_is_a_carousel_not_the_grid():
                 all(r.currency == "JPY" for r in
                     parse_products(deep_html, deep_url, currency="JPY")))
     # A DETAIL page publishes a different @type entirely — BreadcrumbList —
-    # so the listing parser finds nothing on it (§20).
+    # so the listing parser finds nothing on it.
     item_html, item_url, _ = fx("item_page")
     types = [b.get("@type") for b in jsonld_blocks(item_html)
              if isinstance(b, dict)]
@@ -450,7 +466,7 @@ def test_dom_fallback():
     # With the payload removed, the fallback must still recover the products
     # from the anchors — that is the difference between "the site changed its
     # payload key" and "there are no products", which is a distinction a
-    # reader needs (§20).
+    # reader needs.
     stripped = html.replace("__INITIAL_STATE__", "__GONE__")
     ok &= check("with the payload gone, the parser reports no payload",
                 search_payload(stripped) == {})
@@ -478,7 +494,7 @@ def test_dom_fallback():
                 [r.price for r in dom] == [1980.0, 2480.0])
     ok &= check("a fallback row says so in price_source",
                 all(r.price_source == "dom" for r in dom))
-    # THE §20 FAILURE, stated directly: the listing parser must find NOTHING
+    # THE DETAIL-PAGE FAILURE, stated directly: the listing parser must find NOTHING
     # on a detail page. It found two well-formed phantom rows until the
     # fallback was gated by route — a detail page links to plenty of other
     # products through its breadcrumb and recommendation rails.
@@ -534,7 +550,7 @@ def test_urls():
                 "lang=en" in strip_tracking(SEARCH_URL + "?lang=en&scid=x"))
     # Hosts that ARE Rakuten and are not Ichiba get their own reason, because
     # "not a Rakuten site" would be false and would send the reader hunting
-    # for a typo they did not make (§5).
+    # for a typo they did not make.
     for host, needle in (
             ("https://ranking.rakuten.co.jp/daily/100316/", "ranking"),
             ("https://books.rakuten.co.jp/", "Books"),
@@ -681,7 +697,7 @@ def test_page_state():
                 "actually sends",
                 detect_block_marker(html) == "akamai-reference-id")
     # The browser wraps that same body in html/head/body — 43 bytes becomes
-    # 82 — which is §20's "a marker must survive both transports" arriving in
+    # 82 — which is the "a marker must survive both transports" arriving in
     # a third costume. A literal "Reference #" with one space matches NONE of
     # the three refusals.
     wrapped = "<html><head></head><body>%s</body></html>" % html
@@ -706,7 +722,7 @@ def test_page_state():
                 detect_page_state(b_html, None, b_url) == "throttled")
     ok &= check("statusless, the bare Akamai deny still reads as blocked",
                 detect_page_state(fx("block_akamai")[0], None, "") == "blocked")
-    # A served page must never be called blocked. This is §18's "count the
+    # A served page must never be called blocked. This is the "count the
     # marker on a page you know is good", as an assertion.
     for name in ("search_p1", "search_p1_browser", "category_p1",
                  "search_deep", "item_page", "search_no_results"):
@@ -731,7 +747,7 @@ def test_page_state():
     ok &= check("a Rakuten page with no payload is not called content",
                 detect_page_state(r_html, r_status, r_url) != "content")
     # No captcha is configured anywhere on this site, which is a measurement
-    # (§18's right question: is one configured, and would we recognise it?).
+    # (the right question: is one configured, and would we recognise it?).
     ok &= check("no fixture carries a vendor captcha marker",
                 all(detect_bot_challenge(fx(n)[0]) is None for n in FIX))
     # An extension's injected hunters must not read as the site's challenge.
@@ -794,7 +810,7 @@ def test_page_flow():
                 delays[3] == delays[2])
     # THE SOLVE CAP IS ENFORCED, not merely declared. It read like a limit in
     # every repo of this family while each engine called the solver twice per
-    # attempt and counted once (§23).
+    # attempt and counted once.
     ok &= check("the solve budget allows the first solve",
                 page_flow.solve_budget(0) is True)
     ok &= check("and refuses the second",
@@ -838,7 +854,7 @@ def test_page_flow():
                 page_flow.pages_at_cap(fx("search_p1")[0]) is True)
     # The readiness wait is a COUNT through the driver, never an evaluated
     # string: a sibling repo died with EvalError under a CSP with no
-    # unsafe-eval and took the run down with exit 1 (§18).
+    # unsafe-eval and took the run down with exit 1.
     seen = []
     got = page_flow.wait_for_count(lambda s: (seen.append(s), 9)[1],
                                    lambda ms: None, "sel", 8, 1000)
@@ -884,7 +900,7 @@ def test_output_contract():
     ok &= check("and both are one row per sku",
                 set(UNIQUE_BY_SKU_MODES) == {"listing", "product"})
 
-    # §9: a column that is null on every row of every run should not exist.
+    # A column that is null on every row of every run should not exist.
     # Measured over every listing fixture AND both detail fixtures, because
     # several columns are populated on one route and not the other, and
     # judging them from listings alone would condemn live columns.
@@ -1096,6 +1112,38 @@ def test_atomic_writes():
                     "dir=directory" in atomic_src)
         ok &= check("_atomic fsyncs before renaming", "os.fsync" in atomic_src)
         ok &= check("_atomic renames with os.replace", "os.replace" in atomic_src)
+
+        # File modes. A temp file is created 0600 and os.replace keeps it, so
+        # an atomic writer that does nothing about it makes every output
+        # owner-only. Tested under three umasks, because under the common
+        # 022 a flat 0644 and the right rule agree, and only 002 tells them
+        # apart.
+        for um, want in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+            old = os.umask(um)
+            try:
+                got = {}
+                for ext, fn in ((".json", lambda p: output_writer.write_json(rows, p)),
+                                (".csv", lambda p: output_writer.write_csv(rows, p))):
+                    p = os.path.join(d, "mode%o%s" % (um, ext))
+                    fn(p)
+                    got[ext] = os.stat(p).st_mode & 0o777
+                mp = output_writer.write_run_meta(
+                    os.path.join(d, "mode%o" % um), {"status": "complete"})
+                got[".meta.json"] = os.stat(mp).st_mode & 0o777
+            finally:
+                os.umask(old)
+            ok &= check("a new output file is 0666 minus the umask (umask %03o)" % um,
+                        set(got.values()) == {want})
+        keep = os.path.join(d, "keep.json")
+        output_writer.write_json(rows, keep)
+        os.chmod(keep, 0o664)
+        old = os.umask(0o077)
+        try:
+            output_writer.write_json(rows, keep)
+        finally:
+            os.umask(old)
+        ok &= check("rewriting an existing output keeps its mode",
+                    os.stat(keep).st_mode & 0o777 == 0o664)
 
         # --- CSV formula neutralisation ---------------------------------
         r = Product(sku="shop:x", url="u",
@@ -1338,7 +1386,7 @@ def test_pyppeteer_teardown_noise():
 
 
 def test_canary_separates_access_from_defect():
-    group("the canary fails on defects and only WARNS on access conditions")
+    group("the canary fails on every run that did not test the site")
     ok = True
     wf_path = os.path.join(REPO_ROOT, ".github", "workflows", "canary.yml")
     wf = open(wf_path, encoding="utf-8").read()
@@ -1353,28 +1401,27 @@ def test_canary_separates_access_from_defect():
     # whether the JOB FAILS, and only running it answers that.
     try:
         start = wf.index('          set -e\n          code=')
-        end = wf.index('          echo "tested=$tested" >> "$GITHUB_OUTPUT"')
-        end += len('          echo "tested=$tested" >> "$GITHUB_OUTPUT"')
+        end = wf.index('          echo "tested=true" >> "$GITHUB_OUTPUT"')
+        end += len('          echo "tested=true" >> "$GITHUB_OUTPUT"')
     except ValueError:
         return check("the canary's exit-code script could be located", False)
     script = "\n".join(line[10:] if line.startswith(" " * 10) else line
                         for line in wf[start:end].splitlines())
 
-    # WHY EACH CODE LANDS WHERE IT DOES:
+    # WHY EACH CODE LANDS WHERE IT DOES. Only 0 passes. This used to let 3
+    # (blocked) and 6 (partial) end the job green with a warning, which made
+    # the badge green on days the site was never actually tested; the
+    # listing routes need no credential and were measured ungated from
+    # datacentre addresses, so any run that did not get in is a red run.
     #   0  got in and parsed         -> pass, and the assertions then run
-    #   3  blocked before parsing    -> ACCESS. Measured intermittent per
-    #      profile on this site, so a daily red badge would be noise.
-    #   5  remote API error          -> DEFECT here, unlike in the siblings,
-    #      and the difference is the point: this canary uses no remote API
-    #      and needs no credential, so exit 5 from it is impossible rather
-    #      than routine. A repo that warned on it would be carrying a
-    #      sibling's excuse for a condition it cannot have.
-    #   6  partial                   -> ACCESS, usually a mid-run throttle.
-    #   1  crashed                   -> DEFECT.
-    #   2  bad arguments             -> DEFECT (in the workflow itself).
-    #   4  served a page, ZERO rows  -> DEFECT, and precisely the regression
-    #      this canary exists to catch: the tile anchor moved.
-    expected = {0: "pass", 3: "warn", 6: "warn",
+    #   3  blocked before parsing    -> FAIL
+    #   5  content never obtained    -> FAIL (transport, timeout, or a page
+    #      that stated rows and parsed to none)
+    #   6  partial                   -> FAIL
+    #   1  crashed                   -> FAIL
+    #   2  bad arguments             -> FAIL (in the workflow itself)
+    #   4  served a page, ZERO rows  -> FAIL: the tile anchor moved
+    expected = {0: "pass", 3: "fail", 6: "fail",
                 1: "fail", 2: "fail", 4: "fail", 5: "fail", 99: "fail"}
     for code, want in sorted(expected.items()):
         body = script.replace('code="${{ steps.run.outputs.exit_code }}"',
@@ -1405,8 +1452,8 @@ def test_canary_separates_access_from_defect():
             got = failed and errored
         ok &= check("exit %-2d is treated as %s" % (code, want), got)
 
-    ok &= check("the reason access is not a defect is written down",
-                "ACCESS CONDITIONS ARE NOT DEFECTS" in wf)
+    ok &= check("the reason every non-zero exit fails is written down",
+                "EVERY NON-ZERO EXIT FAILS THE JOB" in wf)
 
     # IT RUNS ON A SCHEDULE AND NEEDS NO SECRET, which is this repo's
     # central claim under test rather than a convenience. The family's rule
@@ -1509,8 +1556,11 @@ def test_ci_checks_is_actually_wired_up():
     # The gitignore must agree with the shape rule, or the check is a second
     # line of defence for a file the first line lets through — which is
     # exactly what happened.
+    # `--dump-html X --pages 150` writes up to X.page150, so the dump
+    # pattern must not stop at two digits.
     for path in ("live/x.html", "out/x.html", "output/x.html",
-                 "results/x.html", "scratch/x.html"):
+                 "results/x.html", "scratch/x.html",
+                 "canary.json.page3", "canary.json.page100"):
         ignored = subprocess.run(["git", "check-ignore", "-q", path],
                                  cwd=REPO_ROOT).returncode == 0
         ok &= check("git also ignores %s" % path, ignored)
@@ -1575,7 +1625,7 @@ def test_ci_checks_is_actually_wired_up():
     # Assembled from pieces rather than written out, so this suite file does
     # not itself carry a key-shaped string for its own check to find — the
     # same trick a sibling uses for its banned-phrase list, and the reason
-    # its scan can cover the suite instead of exempting it (§22).
+    # its scan can cover the suite instead of exempting it.
     fake_hex = ("dead" + "beef") * 4
     ok &= check("a hex the line never justified still fails",
                 ci.HEX32.findall(ci._without_site_ids('key = "%s"'
@@ -1755,13 +1805,12 @@ def test_wording():
     listed = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
                             capture_output=True, text=True)
     if listed.returncode == 0 and listed.stdout.strip():
-        shipped = [f for f in listed.stdout.split("\n")
-                   if f.endswith((".py", ".md", ".txt", ".toml", ".yml", ".yaml"))
-                   and os.path.basename(f) != os.path.basename(__file__)]
+        tracked = [f for f in listed.stdout.split("\n") if f]
     else:  # not a git checkout (a release tarball): fall back to the root
-        shipped = [f for f in os.listdir(REPO_ROOT)
-                   if f.endswith((".py", ".md", ".txt", ".toml", ".yml", ".yaml"))
-                   and f != os.path.basename(__file__)]
+        tracked = [f for f in os.listdir(REPO_ROOT)
+                   if os.path.isfile(os.path.join(REPO_ROOT, f))]
+    shipped = [f for f in tracked
+               if f.endswith((".py", ".md", ".txt", ".toml", ".yml", ".yaml"))]
     ok &= check("the wording scan reaches beyond the repo root",
                 any(os.sep in f or "/" in f for f in shipped))
     for phrase in BANNED_PHRASES:
@@ -1774,6 +1823,25 @@ def test_wording():
             if phrase.lower() in text.lower():
                 offenders.append(f)
         ok &= check("no shipped file says %r" % phrase, not offenders)
+
+    # Private citations, in EVERY tracked text file (dotfiles, workflows and
+    # released CHANGELOG sections included), not only the extensions above.
+    cited = []
+    for f in tracked:
+        if os.path.basename(f) in CITATION_SCAN_SKIP:
+            continue
+        try:
+            text = open(os.path.join(REPO_ROOT, f), encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if PRIVATE_SECTION_RE.search(text) or any(
+                c.lower() in text.lower() for c in PRIVATE_CITATIONS):
+            cited.append(f)
+    ok &= check("no tracked file cites private notes or their section "
+                "numbers (%s)" % (", ".join(cited) or "none"), not cited)
+    ok &= check("the suite scans itself too",
+                os.path.basename(__file__) in [os.path.basename(f)
+                                               for f in shipped])
 
     for flag in REMOVED_ENGINE_FLAGS:
         offenders = []
@@ -1810,10 +1878,10 @@ def test_fingerprint_client_reads_env():
     # THE DEFECT THIS PINS, found the first time --fingerprint was run live
     # here and confirmed present in five sibling repos: `--key` defaulted to
     # `os.environ.get("TWOCAPTCHA_KEY")` alone. So a key put in `.env` —
-    # which is exactly what §3, the README and .env.example instruct — worked
+    # which is exactly what the README and .env.example instruct — worked
     # for every engine and failed HERE with "No API key". A documented
     # mechanism not applied on one path, which is the shape of half the
-    # defects §16 lists.
+    # defects found in copied core.
     src = inspect.getsource(fpc.main)
     ok &= check("it loads .env itself, rather than hoping an engine did",
                 "env_config.load_env()" in src)
@@ -1877,7 +1945,7 @@ def test_fingerprint_application():
     # possible, but it is not what this fingerprint describes, and a locale
     # that contradicts the rest of the identity is the mismatch again. This
     # was one of the six defects a sibling repo inherited from copied core
-    # and never ran (§16).
+    # and never ran.
     ok &= check("the locale is the fingerprint's own, not en-<country>",
                 kw.get("locale") == "nl-NL")
     ok &= check("the timezone is carried, so the browser cannot contradict it",
@@ -2183,7 +2251,7 @@ def test_sample_output():
                 {r["source"] for r in rows} == {"rakuten.co.jp"})
     # A MULTI-PAGE sample, so the two columns that only mean something
     # together are visible doing their job. A single-page sample cannot show
-    # that `position` restarts per page, which is the arithmetic bug §18
+    # that `position` restarts per page, which is the arithmetic bug
     # names.
     pages = sorted({r["page"] for r in rows})
     ok &= check("the sample spans more than one page (%s)" % pages,
@@ -2270,9 +2338,32 @@ def test_captcha():
     ok &= check("neither firing means no challenge",
                 reconcile_detections(None, None) is None)
 
+    # A saved page with only the hyphenated `g-recaptcha` container, or only
+    # the widget's `api2/anchor` frame, and no literal `grecaptcha` anywhere:
+    # the static detector used to bail on such a capture and report no
+    # captcha. A frame present means v2 (v3 renders none).
+    from captcha_solver import detect_recaptcha_v3 as _static
+    _k = "6Lc" + "TestOnlyNotAKey" + "x" * 22
+    got_c = _static('<div class="g-recaptcha" data-sitekey="%s"></div>'
+                    '<script src="https://www.google.com/recaptcha/api.js'
+                    '?render=explicit"></script>' % _k, "u")
+    got_a = _static('<iframe src="https://www.google.com/recaptcha/api2/'
+                    'anchor?ar=1&k=%s&co=x&size=invisible"></iframe>' % _k, "u")
+    ok &= check("the static detector finds a v2 widget by its container "
+                "class alone", got_c is not None and got_c.kind == "recaptcha_v2"
+                and got_c.sitekey == _k)
+    ok &= check("...and by its anchor frame alone, with the frame's size",
+                got_a is not None and got_a.sitekey == _k
+                and got_a.kind == "recaptcha_v2_invisible")
+    served = [n for n in FIX if isinstance(FIX[n], dict)
+              and isinstance(FIX[n].get("html"), str)
+              and _static(FIX[n]["html"], FIX[n].get("url", ""))]
+    ok &= check("...and fires on none of this site's captures (%s)"
+                % (", ".join(served) or "none"), not served)
+
     # Deliberately absent: no solver for a first-party image captcha. This
-    # site has no such page — measured 2026-09-10, its refusal is not a page
-    # at all: the HTTP/2 stream is reset and nothing arrives — so a solver
+    # site has no such page — its refusals are a 43-byte Akamai deny and a
+    # branded 403/503 page, none with a form or an image on it — so a solver
     # for one would be dead code that looks load-bearing. Pinned so that
     # reintroducing it is a decision rather than a drift.
     import captcha_solver
@@ -2283,7 +2374,7 @@ def test_captcha():
     # policy: which challenge a visitor meets depends on the exit country and
     # on what the address has been doing.
     # THE MARKER SET IS THE MEASUREMENT, and on this site the measurement
-    # is zero. §18's question is not "did we meet a captcha" but "is one
+    # is zero. the question is not "did we meet a captcha" but "is one
     # CONFIGURED, and would we recognise it if it appeared?" — so it was
     # asked properly: across all 13 captures, served and refused alike,
     # there are no reCAPTCHA, hCaptcha, Turnstile, DataDome, PerimeterX,
@@ -2309,19 +2400,19 @@ def test_captcha():
     # loads, so it fires on GOOD pages fetched over --cdp-endpoint — and on
     # two sibling sites it was measured to MISS the real challenge while
     # doing so. A marker that fires on good pages and is absent from the bad
-    # one is worse than no marker (§19).
+    # one is worse than no marker.
     ok &= check("cf-turnstile is not carried",
                 not any("cf-turnstile" in m for m in markers))
     # A bare CDN or vendor NAME is not carried either. Rakuten is fronted by
     # Akamai, and "this site uses Akamai" is a fact about its
-    # infrastructure rather than a signal about this response (§18).
+    # infrastructure rather than a signal about this response.
     ok &= check("a bare vendor/CDN name is not a marker",
                 not any(m in ("akamai", "akam", "edgesuite", "cloudflare")
                         for m in markers))
     # NOT ONE of them may appear on a page the site served. This is the
     # check that would have caught the family's `cf-turnstile` mistake, run
     # against the fixtures that matter rather than against a 404 fetched by
-    # curl (§21: a guard is only as good as the fixture it runs against).
+    # curl (a guard is only as good as the fixture it runs against).
     for name in ("search_p1", "search_p1_browser", "category_p1",
                  "search_deep", "search_sponsored", "item_page",
                  "item_discounted", "search_no_results"):
@@ -2339,7 +2430,7 @@ def test_captcha():
                 detect_bot_challenge(fx("search_p1")[0] + EXTENSION_TAGS)
                 is None)
     # AND THE SAME THING AGAINST A PAGE ACTUALLY FETCHED THAT WAY, which is
-    # the fixture §21 says a guard needs: a sibling repo's version of this
+    # the fixture a guard needs: a sibling repo's version of this
     # check ran only against a curl-fetched 404, which carries no injection
     # at all, so it passed for the wrong reason.
     #
@@ -2401,7 +2492,7 @@ def test_captcha():
     ok &= check("...and its rows parse",
                 len(parse_products(cdp_html, cdp_url)) >= 3)
     # And the honest sentence about the paid product, which is the one this
-    # family has got wrong before (§19). What may be written is "this repo
+    # family has got wrong before. What may be written is "this repo
     # does not implement X", never "X cannot be solved" — 2Captcha solves
     # enterprise reCAPTCHA (RecaptchaV2EnterpriseTaskProxyless) and
     # Cloudflare Turnstile (TurnstileTaskProxyless), whatever this client
@@ -2690,7 +2781,7 @@ def test_proxy_pool():
     # was written to show. Every caller here passes the URL as its own `%s`
     # argument for that reason, and `_mask_credentials()` is what handles
     # arbitrary text. Asserting the CURRENT behaviour makes a future swap a
-    # failing check rather than an unreadable log (§10).
+    # failing check rather than an unreadable log.
     sentence = "a http://u:supersecret@h.example:8080 b"
     ok &= check("mask() on a sentence loses the host — the documented limit",
                 mask(sentence) == "?://?")
@@ -2793,7 +2884,7 @@ def test_engines(skips):
         # "Not painted yet" is not a fault, and every engine has to make that
         # distinction the same way — the first live search run of the
         # Playwright engine reported 0 rows and exit 4 because it did not.
-        # §17's rule, applied to this repo's own additions: a policy
+        # the rule, applied to this repo's own additions: a policy
         # constant or a helper that nothing consults is the same defect as
         # dead code, and harder to see because the prose reads like
         # enforcement. All three of these were written, documented in the
@@ -2857,7 +2948,7 @@ def test_engines(skips):
 
     # THE FLAG CONTRACT, and the exact ways the engines differ from it.
     #
-    # §9 lists the flags every engine must offer. Checked rather than
+    # The family contract lists the flags every engine must offer. Checked rather than
     # trusted, because a flag one engine has and another does not is the
     # drift page_flow.py and finish_run() exist to prevent, one level up —
     # and because the README documents these differences by name, so a new
@@ -2890,7 +2981,7 @@ def test_engines(skips):
         # there is nothing left to except: the family's contract flags are
         # in all three engines. A sibling repo shipped twelve flags the
         # primary engine had and its twins did not, nine of them predating
-        # the work, while its README promised "same CLI" (§20) — so a new
+        # the work, while its README promised "same CLI" — so a new
         # unshared flag has to fail here.
         #
         # This closed two real gaps rather than documenting them: pyppeteer
@@ -2910,7 +3001,7 @@ def test_engines(skips):
         # And a flag every engine declares must be one every engine READS. A
         # flag that is accepted and then ignored looks configurable and is
         # not, which is the defect this family keeps finding in its own
-        # copied core (§17).
+        # copied core.
         for eng in ("playwright_scraper", "puppeteer_scraper",
                     "selenium_scraper"):
             esrc = open(os.path.join(REPO_ROOT, eng + ".py"),
@@ -2947,7 +3038,7 @@ def test_engines(skips):
                       if "args.fingerprint = False" in ln]
             ok &= check("%s forces it off in exactly one place" % eng,
                         len(forced) == 1)
-            # THE BEHAVIOUR, not a comment saying so — §20's rule that an
+            # THE BEHAVIOUR, not a comment saying so — the rule that an
             # assertion which is a proxy for behaviour goes stale. Forcing
             # `args.fingerprint = False` only gates the identity if EVERY
             # path that applies one is itself behind that flag.
@@ -2957,7 +3048,7 @@ def test_engines(skips):
             # and guard its CALL SITE. A version of this check that looked
             # only for calls lexically inside an `if ... fingerprint` block
             # reported those two as ungated, which was the check being wrong
-            # rather than the code (§22: ask what a check does when its
+            # rather than the code (ask what a check does when its
             # resolution fails).
             etree = ast.parse(esrc)
             applies = ("get_fingerprint", "_apply_fingerprint",
@@ -3015,7 +3106,7 @@ def test_engines(skips):
     # `pages_still_growing` — so a Selenium run's sidecar was MISSING the
     # cap arithmetic, which on this site is the figure that keeps
     # `status: complete` honest: the site serves 6,750 of 3,000,000 matches,
-    # and a sidecar that says only "complete" is lying by omission (§21).
+    # and a sidecar that says only "complete" is lying by omission.
     #
     # Compared as the SET OF KEYS each engine builds, read off the source,
     # because the alternative is three live runs and a diff — which is how
@@ -3067,14 +3158,14 @@ def test_engines(skips):
         ok &= check("%s merges page 1's cap summary into the sidecar" % eng,
                     "page_one_cap" in esrc
                     and "extra.update(page_one_cap)" in esrc)
-        # A dead dataclass field is the same defect as a dead column (§9).
+        # A dead dataclass field is the same defect as a dead column.
         ok &= check("%s has no dead `scroll` outcome field" % eng,
                     "scroll: Optional" not in esrc)
 
     # `--fp-tags` MUST DEFAULT TO ONE OS-FAMILY TAG. It shipped in this
     # family as "Windows,Chrome,Desktop", which the fingerprint API rejects
     # with HTTP 400 — so --fingerprint failed on every invocation, which is
-    # one of the six defects §16 of the family notes lists. Measured
+    # one of the six defects found in the copied fingerprint client. Measured
     # 2026-09-10 against the live API: `Windows` succeeds;
     # `Windows,Chrome,Desktop`, `Chrome` and `Desktop` each 400.
     for name in _ENGINE_MODULES:
@@ -3304,7 +3395,7 @@ def _unreachable_statements(path):
 def test_public_names_have_consumers():
     group("no public name is dead code or unenforced policy")
     ok = True
-    # §17 #5: grep every public name in a shared module for a consumer
+    # Grep every public name in a shared module for a consumer
     # outside its own module, then READ what comes back. The ones that
     # encode SITE POLICY rather than plumbing are pinned here, so deleting
     # one fails instead of quietly changing behaviour — which is the failure
@@ -3353,7 +3444,7 @@ def test_public_names_have_consumers():
     ok &= check("SOURCE_DEFAULT is what a row's `source` actually says",
                 Product().source == "rakuten.co.jp")
     # THE THROTTLE POLICY IS CONSULTED, not merely declared. This is the
-    # §17/§23 defect at its most expensive: `SOLVES_PER_PAGE` read like an
+    # The unenforced-cap defect at its most expensive: `SOLVES_PER_PAGE` read like an
     # enforced cap in every repo of this family while each engine called the
     # solver twice per attempt and counted once.
     ok &= check("the throttle budget and its backoff agree in length",
@@ -3370,16 +3461,307 @@ def test_public_names_have_consumers():
         ok &= check("%s consults RETRY_ON_BLOCKED rather than only "
                     "documenting it" % eng, "RETRY_ON_BLOCKED" in src)
         # Count the solve call sites, the guards and the increments, and
-        # assert the three are equal. That is the check §23 asks for by
-        # name, and it is what a reading of the code does not give you.
+        # assert the three are equal: a call site the budget does not cover
+        # can buy a solve the cap was meant to refuse. The pre-classification
+        # site counts ATTEMPTED purchases (the `purchases` list the handler
+        # appends to before asking the solver), so a solver that raises
+        # cannot be asked twice for one page.
         calls = src.count("handle_captcha_if_present(")
         guards = src.count("page_flow.solve_budget(")
-        bumps = src.count("solves_bought += 1")
+        bumps = (src.count("solves_bought += 1")
+                 + src.count("solves_bought += len(purchases)"))
+        ok &= check("%s counts an attempted purchase, not only a successful "
+                    "one, at the pre-classification call" % eng,
+                    "purchases=purchases" in src
+                    and "purchases.append(" in src)
         # One of the "calls" is the function's own def.
         ok &= check("%s: every solve call site is behind the budget "
                     "(%d call(s), %d guard(s), %d increment(s))"
                     % (eng, calls - 1, guards, bumps),
                     calls - 1 == guards == bumps)
+    return ok
+
+
+
+def _load_engine_with_stub_driver(eng):
+    """Import an engine even when its driver library is absent.
+
+    The fetch loop is pure Python around a handful of driver calls, so it can
+    be driven with a fake page. When the real driver is installed it is used;
+    otherwise a stub module stands in for the import only, and both the stub
+    and the engine are removed from sys.modules afterwards so the engine
+    groups elsewhere in this suite still see the library as absent.
+    """
+    import importlib
+    import types
+    stubs = {}
+    if eng == "playwright_scraper":
+        try:
+            import playwright.sync_api  # noqa: F401
+        except ImportError:
+            api = types.ModuleType("playwright.sync_api")
+
+            class Error(Exception):
+                pass
+
+            class TimeoutError(Error):  # noqa: A001 — mirrors the real name
+                pass
+            api.Error, api.TimeoutError = Error, TimeoutError
+            api.sync_playwright = lambda: None
+            stubs = {"playwright": types.ModuleType("playwright"),
+                     "playwright.sync_api": api}
+    elif eng == "puppeteer_scraper":
+        try:
+            import pyppeteer  # noqa: F401
+        except ImportError:
+            mod = types.ModuleType("pyppeteer")
+            mod.launch = mod.connect = lambda *a, **k: None
+            stubs = {"pyppeteer": mod}
+    had = eng in sys.modules
+    if had and not stubs:
+        return sys.modules[eng]
+    saved = dict((k, sys.modules.get(k)) for k in stubs)
+    sys.modules.update(stubs)
+    try:
+        sys.modules.pop(eng, None)
+        engine = importlib.import_module(eng)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+        if stubs and not had:
+            sys.modules.pop(eng, None)
+    return engine
+
+
+class _LoopFakeResponse:
+    def __init__(self, status):
+        self.status = status
+
+
+class _LoopFakePage:
+    """Answers the driver calls both browser engines' fetch loops make.
+
+    pyppeteer's calls go through `bridge.run(...)`, which the fake bridge
+    below passes straight through, so plain return values serve both.
+    """
+    def __init__(self, url, html, status=200, goto_error=None):
+        self.url, self._html, self._status = url, html, status
+        self._goto_error = goto_error
+        self.gotos = 0
+
+    def goto(self, url, *a, **k):
+        self.gotos += 1
+        if self._goto_error is not None:
+            raise self._goto_error
+        self.url = url
+        return _LoopFakeResponse(self._status)
+
+    def content(self):
+        return self._html
+
+    def query_selector_all(self, sel):
+        return []
+
+    querySelectorAll = query_selector_all
+
+    def wait_for_timeout(self, ms):
+        return None
+
+    def evaluate(self, *a, **k):
+        return None
+
+    def reload(self, *a, **k):
+        return _LoopFakeResponse(self._status)
+
+
+class _LoopFakeBridge:
+    def run(self, value):
+        return value
+
+
+class _LoopFakeSession:
+    def __init__(self, page):
+        self.page, self.bridge, self.relaunches = page, _LoopFakeBridge(), 0
+
+    def relaunch(self):
+        self.relaunches += 1
+
+
+def test_engine_fetch_loop_offline():
+    group("browser engines' fetch loop, driven offline with a fake page")
+    ok = True
+    import types
+    import argparse as _ap
+    import time as _time
+    import page_flow as _pf
+    no_sleep = types.SimpleNamespace(sleep=lambda s: None, time=_time.time,
+                                     monotonic=_time.monotonic)
+    blk_html, blk_url, _ = fx("block_403")
+    for eng in ("playwright_scraper", "puppeteer_scraper"):
+        try:
+            engine = _load_engine_with_stub_driver(eng)
+        except Exception as e:  # noqa: BLE001
+            ok &= check("%s loads with a stub driver (%s)" % (eng, e), False)
+            continue
+        real_time = engine.time
+        engine.time = no_sleep
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                args = _ap.Namespace(
+                    pages=1, retries=1, retry_delay=0.0, mode="listing",
+                    out=os.path.join(d, "out"), dump_html=None,
+                    proxy_block_retries=0, solve_captcha="when-blocked",
+                    twocaptcha_key="", captcha_api="v2", min_score=0.7)
+
+                # 1. No proxy at all, and every navigation fails. Must end
+                #    as a load failure, never as an AttributeError on the
+                #    absent pool.
+                err_cls = getattr(engine, "PWTimeout", Exception)
+                page = _LoopFakePage(blk_url, "",
+                                 goto_error=err_cls("Navigation Timeout Exceeded"))
+                try:
+                    out = engine._fetch_one_page(_LoopFakeSession(page), args,
+                                                 None, 1, blk_url)
+                    raised = None
+                except Exception as e:  # noqa: BLE001
+                    out, raised = None, e
+                ok &= check("%s: repeated load failures with no proxy pool "
+                            "end as a load failure, not a crash (%r)"
+                            % (eng, raised),
+                            raised is None and out.load_failed)
+
+                # 2. The site's branded refusal under HTTP 403 is a BLOCK.
+                #    Without the status it would read as a 503 throttle and
+                #    be waited out at the same exit.
+                page = _LoopFakePage(blk_url, blk_html, status=403)
+                out = engine._fetch_one_page(_LoopFakeSession(page), args,
+                                             None, 1, blk_url)
+                ok &= check("%s: the branded page under HTTP 403 is "
+                            "classified blocked, so the status reached the "
+                            "classifier (state=%s)" % (eng, out.state),
+                            out.state == "blocked"
+                            and out.blocked_by is not None)
+                page = _LoopFakePage(blk_url, blk_html, status=503)
+                out = engine._fetch_one_page(_LoopFakeSession(page), args,
+                                             None, 1, blk_url)
+                ok &= check("%s: the same page under HTTP 503 is a throttle, "
+                            "waited out rather than reported blocked "
+                            "(state=%s, %d fetches)" % (eng, out.state,
+                                                        page.gotos),
+                            out.state == "throttled"
+                            and page.gotos == 1 + _pf.THROTTLE_RETRIES)
+
+                # 3. A solver that RAISES still counts against the page's
+                #    allowance: one page, a challenge on every fetch, a
+                #    solver that fails every time -> at most SOLVES_PER_PAGE
+                #    calls to it.
+                calls = []
+
+                def _solver(*a, **k):
+                    calls.append(1)
+                    raise RuntimeError("stub solver failure")
+                fake_challenge = types.SimpleNamespace(
+                    kind="recaptcha_v2", source="html", sitekey="stub",
+                    action=None)
+                saved = (engine.solve_recaptcha, engine.reconcile_detections,
+                         _pf.classify)
+                engine.solve_recaptcha = _solver
+                engine.reconcile_detections = lambda *a: fake_challenge
+                _pf.classify = lambda *a, **k: "challenge"
+                args.twocaptcha_key = "stub-not-sent"
+                try:
+                    page = _LoopFakePage(blk_url, "<html></html>", status=200)
+                    engine._fetch_one_page(_LoopFakeSession(page), args, None, 1,
+                                           blk_url)
+                finally:
+                    (engine.solve_recaptcha, engine.reconcile_detections,
+                     _pf.classify) = saved
+                    args.twocaptcha_key = ""
+                ok &= check("%s: a failing solver is asked at most "
+                            "SOLVES_PER_PAGE times for one page (%d call(s))"
+                            % (eng, len(calls)),
+                            0 < len(calls) <= _pf.SOLVES_PER_PAGE)
+        finally:
+            engine.time = real_time
+
+    # Every classify call in every engine names a status argument, even
+    # Selenium's, which passes None on purpose because WebDriver has none.
+    import ast as _ast
+    for eng in ("playwright_scraper", "puppeteer_scraper", "selenium_scraper"):
+        tree = _ast.parse(open(os.path.join(REPO_ROOT, eng + ".py"),
+                               encoding="utf-8").read())
+        bad, seen = [], 0
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Call):
+                continue
+            f = node.func
+            name = getattr(f, "attr", None) or getattr(f, "id", None)
+            if name not in ("classify", "_classify"):
+                continue
+            seen += 1
+            npos = len(node.args) - (1 if name == "_classify" else 0)
+            if npos < 2 and not any(k.arg == "status" for k in node.keywords):
+                bad.append(node.lineno)
+        ok &= check("%s: every classify call passes a status (%d call(s), "
+                    "missing at lines %s)" % (eng, seen, bad),
+                    seen > 0 and not bad)
+
+    # Numeric flags are validated at the command line, by argparse, in every
+    # entry point: read off disk so the check runs with no driver installed.
+    want = {"--pages": "at_least_one", "--concurrency": "at_least_one",
+            "--delay": "non_negative_seconds",
+            "--retry-delay": "non_negative_seconds",
+            "--proxy-block-retries": "non_negative_int",
+            "--retries": "attempts"}
+    api_want = {"--retries": "non_negative_int",
+                "--retry-delay": "non_negative_int",
+                "--timeout": "at_least_one"}
+    for eng, table in (("playwright_scraper", want),
+                       ("puppeteer_scraper", want),
+                       ("selenium_scraper", want),
+                       ("scraper_api_client", api_want)):
+        tree = _ast.parse(open(os.path.join(REPO_ROOT, eng + ".py"),
+                               encoding="utf-8").read())
+        types_ = {}
+        for node in _ast.walk(tree):
+            if (isinstance(node, _ast.Call)
+                    and getattr(node.func, "attr", None) == "add_argument"
+                    and node.args and isinstance(node.args[0], _ast.Constant)):
+                for k in node.keywords:
+                    if k.arg == "type":
+                        types_[node.args[0].value] = getattr(
+                            k.value, "attr", getattr(k.value, "id", None))
+        wrong = sorted(f for f, t in table.items() if types_.get(f) != t)
+        ok &= check("%s validates its numeric flags with page_flow's "
+                    "validators (wrong: %s)" % (eng, wrong or "none"),
+                    not wrong)
+    import argparse as _ap2
+    probe = _ap2.ArgumentParser()
+    probe.add_argument("--pages", type=_pf.at_least_one)
+    probe.add_argument("--delay", type=_pf.non_negative_seconds)
+    probe.add_argument("--proxy-block-retries", type=_pf.non_negative_int)
+
+    def _rejects(argv, flag):
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err):
+                probe.parse_args(argv)
+        except SystemExit as e:
+            return e.code == 2 and ("argument %s" % flag) in err.getvalue()
+        return False
+    ok &= check("--pages 0 is a usage error naming the flag",
+                _rejects(["--pages", "0"], "--pages"))
+    ok &= check("--delay -5 is a usage error naming the flag",
+                _rejects(["--delay", "-5"], "--delay"))
+    ok &= check("--proxy-block-retries -1 is a usage error naming the flag",
+                _rejects(["--proxy-block-retries", "-1"],
+                         "--proxy-block-retries"))
+    ok &= check("...while --pages 1, --delay 0 and --proxy-block-retries 0 "
+                "parse", probe.parse_args(["--pages", "1", "--delay", "0",
+                                           "--proxy-block-retries", "0"]).pages == 1)
     return ok
 
 
@@ -3450,7 +3832,7 @@ def test_every_shared_call_binds():
     group("every call into a shared module binds, including the paths a "
           "credential gates")
     ok = True
-    # §17's check #1, widened to the case that matters most here: the
+    # the check #1, widened to the case that matters most here: the
     # credential-gated modules. `fingerprint_client`, `scraper_api_client`
     # and `captcha_solver` are reached only with a 2Captcha key, and no key
     # was available to the work that built this repo — so a wrong call in
@@ -3528,7 +3910,7 @@ def test_every_shared_call_binds():
             # A name the module does NOT define is the loudest thing this
             # check can say, so it must not be skipped — a sibling repo
             # resolved with getattr(..., None), skipped anything
-            # not-callable, and stayed silent on exactly that case (§22).
+            # not-callable, and stayed silent on exactly that case.
             if target is None:
                 bad.append("%s:%d %s.%s does not exist"
                            % (caller, node.lineno, module_name, real))
@@ -3593,7 +3975,7 @@ def test_sponsored_slots_do_not_shift_position():
     # a click-tracking URL yields no sku and `_row_from_hit` drops the entry
     # anyway — so that assertion alone would pass against a broken filter.
     # (Found by planting exactly that fault and watching the suite stay
-    # green; §22's "verify that your control actually failed".)
+    # green; the "verify that your control actually failed".)
     #
     # A sponsored entry wearing a product-shaped URL is the case only the
     # filter catches, and Rakuten already puts `cpc` on every one of them.
@@ -3627,7 +4009,7 @@ def test_sponsored_slots_do_not_shift_position():
     ok &= check("position starts at 1 even though the payload starts with ads",
                 rows[0].position == 1)
     # page+position must be unique across a multi-page run — one line, and
-    # the column is worthless without it (§18).
+    # the column is worthless without it.
     multi = parse_products(html, url, page=1) + parse_products(html, url,
                                                                page=2)
     pairs = [(r.page, r.position) for r in multi]
@@ -3683,7 +4065,7 @@ def test_detail_pages():
     # A WAS-PRICE, and only where Rakuten's own verification flag allows one.
     # Japan's double-pricing rules require a merchant's reference price to be
     # substantiated, and the site carries the outcome as a flag — which is
-    # the "use the site's own should-I-show-this flag" rule (§21).
+    # the "use the site's own should-I-show-this flag" rule.
     ok &= check("a verified reference price becomes original_price",
                 row.original_price == 10398.0)
     ok &= check("and WHICH reference price it was is recorded",
@@ -3691,7 +4073,7 @@ def test_detail_pages():
     ok &= check("the discount is computed from the two prices",
                 row.discount_pct == 50.0)
     # The other fixture has the flag FALSE, so no was-price at all — both
-    # values of the flag are exercised, which §20 asks for.
+    # values of the flag are exercised.
     plain = parse_product_page(*_fx_detail("item_page"))[0]
     ok &= check("an UNVERIFIED reference price is not read",
                 plain.original_price is None
@@ -3824,7 +4206,7 @@ def test_parse_is_gated_on_the_policy():
     # engine parsed whatever reached the parse line, so the `parse` column
     # of STATE_POLICY decided nothing and an engine could disagree with the
     # table — and with its twins — without anything noticing. That is the
-    # defect CLAUDE.md §17 names for constants, with a function instead.
+    # defect of a policy constant nothing reads, with a function instead.
     #
     # Measured across the family on 2026-09-23 by counting definitions
     # against readers: 7 of 24 repos defined it and none called it.
@@ -3957,6 +4339,7 @@ def main() -> int:
     ok &= test_every_shared_call_binds()
     ok &= test_x_debug_header_is_redacted()
     ok &= test_scraper_api_waitfor_is_an_object()
+    ok &= test_engine_fetch_loop_offline()
 
     print()
     if _failures:

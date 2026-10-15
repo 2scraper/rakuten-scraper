@@ -105,10 +105,10 @@ Then the rest of the presentation, in the order that matters:
    runs daily on a schedule, which is deliberate: the README's central claim
    is that you need no key, no proxy and no account to read this site's
    listings, and a scheduled, ungated, real three-page run is that claim
-   under test every morning. The family's rule that a canary which cannot
-   pass must SKIP has a second half — a canary that CAN pass without a
-   credential must never be gated on one, or the badge goes green every day
-   while testing nothing.
+   under test every morning. A canary that CAN pass without a credential
+   must never be gated on one, and any run that did not really test the
+   site (blocked, partial, nothing obtained, zero rows) fails the job, so a
+   green badge always means real rows were parsed that day.
 
    Note that `workflow_dispatch` needs the workflow to exist on the DEFAULT
    branch: from a feature branch `gh workflow run` answers

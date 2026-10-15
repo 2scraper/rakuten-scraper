@@ -2,7 +2,7 @@
 
 Rakuten answers a request six ways and five of them want a different
 response, which is why this module exists rather than the same triage being
-written three times inside three engines and drifting apart (§1):
+written three times inside three engines and drifting apart:
 
     content    the listing payload or the item island is in the response
     empty      served exactly as asked and `numFound: 0` — the site's own
@@ -35,7 +35,7 @@ passes its own driver's primitives and keeps its browser plumbing to itself:
     content() -> Optional[str]      current HTML, None if unavailable
     sleep(ms) -> None               wait
 
-No JavaScript crosses that boundary in either direction (§1): Selenium's
+No JavaScript crosses that boundary in either direction: Selenium's
 `execute_script` takes a function BODY with an explicit `return` where
 Playwright and pyppeteer take `() => expr`, so the shared module names the
 OPERATION and the engine spells it in its own driver's dialect.
@@ -80,7 +80,7 @@ logger = logging.getLogger("page_flow")
 # Readiness
 # ---------------------------------------------------------------------------
 # A price node WITH SOMETHING IN IT rather than a card count, for the reason
-# §8 gives: a selector matching the wrong element is worse than one matching
+# the rule is: a selector matching the wrong element is worse than one matching
 # nothing, and a tile's shell can exist while its amount is still blank.
 #
 # What a timed-out wait costs here is small and worth stating plainly,
@@ -93,7 +93,7 @@ logger = logging.getLogger("page_flow")
 READY_SELECTOR_LISTING = '[class*="price--"]'
 READY_SELECTOR_PRODUCT = '[class*="price"], #priceCalculationConfig'
 
-# Above 1, per §5: waiting for a single match resolves on an unrelated node
+# Above 1: waiting for a single match resolves on an unrelated node
 # long before a grid paints. Below the smallest real page — a Rakuten
 # listing page is 45 products on 11 of 11 captures, and the LAST page of a
 # capped query is 45 too (page 150 came back `start: 6705`, exactly
@@ -118,7 +118,7 @@ def min_matches(mode: str = "listing", expected: Optional[int] = None) -> int:
     `expected` is the page's own hit count where the caller knows it,
     because this site states it: a query with 5 total hits renders 5 tiles,
     and waiting for 8 of them would time out on a page that is fully
-    painted. Never above the floor and never below 2 (§5).
+    painted. Never above the floor and never below 2.
     """
     floor = _MIN.get(mode, MIN_CARD_MATCHES)
     if expected is None:
@@ -158,7 +158,7 @@ def wait_for_count(count: Callable[[str], int], sleep: Callable[[int], None],
     `EvalError: Evaluating a string as JavaScript violates the following
     Content Security Policy directive` on a site whose CSP has no
     `unsafe-eval`, and took the run down with exit 1 on that site's most
-    obvious URL (§18). Counting elements goes through the protocol, works
+    obvious URL. Counting elements goes through the protocol, works
     under any CSP, and spells the same in all three drivers.
     """
     waited = 0
@@ -187,7 +187,7 @@ def classify(html: Optional[str], status: Optional[int] = None,
     Getting that wrong is not a style question: a sibling repo shipped two
     of three engines calling this as `classify(html, url=...)`, both crashed
     on their first fetch, and nothing short of a live run or a
-    signature-binding check saw it (§17).
+    signature-binding check saw it.
 
     On this site the status is more load-bearing than on any sibling: it is
     the only thing separating a 503 throttle from a 403 block, because
@@ -199,7 +199,7 @@ def classify(html: Optional[str], status: Optional[int] = None,
 
 
 # The retry/solve/blocked decision as DATA rather than as three copies of an
-# if-chain in three engines (§1).
+# if-chain in three engines.
 #
 #   parse    is there anything on this page worth writing down?
 #   retry    would fetching it again plausibly help?
@@ -215,7 +215,7 @@ STATE_POLICY: Dict[str, Dict[str, bool]] = {
     # nothing, and nothing downstream could tell them from results.
     "empty":     {"parse": False, "retry": False, "solve": False, "blocked": False},
     # Served, and still painting. Wants the readiness wait, not another
-    # fetch: refetching a shell just buys another shell (§18).
+    # fetch: refetching a shell just buys another shell.
     "shell":     {"parse": True,  "retry": False, "solve": False, "blocked": False},
     # Retryable, NOT blocked, and not paid for. Rakuten's 503 is a rate
     # limit: it arrived while a probe was fetching with no delay between
@@ -272,7 +272,7 @@ def is_unpainted(state: str, html: Optional[str]) -> bool:
 # answer and the advice below says what is.
 #
 # The engines read these constants rather than computing their own budget —
-# a policy constant nothing consults is the same defect as dead code (§17),
+# a policy constant nothing consults is the same defect as dead code,
 # and the suite asserts each one has a consumer.
 RETRY_ON_BLOCKED = True
 BLOCK_RETRIES_WITHOUT_POOL = 1
@@ -292,7 +292,7 @@ THROTTLE_BACKOFF_MS = (6_000, 15_000, 30_000)
 # through `solve_budget`, because a sibling repo discovered that this
 # constant had read like a limit in every repo in the family while every
 # engine called the solver twice per attempt and counted once — one page
-# bought three Turnstile solves (§23).
+# bought three Turnstile solves.
 SOLVES_PER_PAGE = 1
 
 
@@ -357,7 +357,7 @@ def block_advice(html: Optional[str], headless: bool,
 # ---------------------------------------------------------------------------
 # Pagination
 # ---------------------------------------------------------------------------
-# Three layers, weakest last (§7). On this site layer 1 is MISSING, which is
+# Three layers, weakest last. On this site layer 1 is MISSING, which is
 # worth stating because the family's template leads with it:
 #
 #   1. A standards-based `<link rel="next">` — ABSENT. Rakuten publishes
@@ -399,8 +399,8 @@ def requested_page_number(url: str, loop_index: int = 1) -> int:
     complete run with nothing in it.
 
     Caught by running `--url '...?p=2' --pages 1`, which is an obvious thing
-    for a user to type and which no test and no ordinary run had tried
-    (§15). Inside the loop the two numbers agree, because the URL is built
+    for a user to type and which no test and no ordinary run had tried.
+    Inside the loop the two numbers agree, because the URL is built
     by `page_url` from that same counter — which is exactly why the bug was
     invisible.
     """
@@ -426,7 +426,7 @@ def served_the_page_asked_for(html: Optional[str],
     payload states `pagination.start`: asked for page 151 and handed
     `start: 0` is the server saying outright that it served page 1.
 
-    That is §23's trap on a second site and in a second spelling — there the
+    That is the trap on a second site and in a second spelling — there the
     server's own page number hid in an Apollo cache key, here it is a plain
     integer — and the general rule is the transferable part: before trusting
     `?p=N`, fetch one page PAST the site's own last and read what comes
@@ -475,7 +475,7 @@ def _as_hrefs(next_href: Union[str, Iterable[str], None]) -> List[str]:
     string is what took a sibling repo's FIRST live run down —
     `TypeError: Cannot mix str and non-str arguments`, from `urljoin` being
     handed a list — and nothing short of running it saw that, because the
-    offline checks called it the way its author was thinking (§17).
+    offline checks called it the way its author was thinking.
     """
     if next_href is None:
         return []
@@ -567,7 +567,7 @@ def pages_at_cap(html: Optional[str]) -> bool:
     numbers itself: one measured query reported `numFound: 3,053,682`
     against a `subset` of 6,750. A 150-page run of that query is complete —
     it fetched everything Rakuten will serve — and it is a 0.2% sample.
-    Only saying so lets a consumer tell the two apart (§21), and it gives
+    Only saying so lets a consumer tell the two apart, and it gives
     `diff_runs.py` the third meaning of `removed`: not delisted, not
     un-fetched, but outside this run's slice of a capped result set.
     """
@@ -599,7 +599,7 @@ def concurrency_limit(url: str) -> Optional[int]:
 def concurrency_refusal(url: str) -> Optional[str]:
     """Why concurrency above 1 is refused for this URL, or None.
 
-    Refused WITH the reason (§18): a single product page and the mall's
+    Refused WITH the reason: a single product page and the mall's
     front page have no page 2 at all, so there is nothing for a second
     worker to fetch, and silently running one worker would look like the
     flag did something.
@@ -668,4 +668,43 @@ def attempts(value) -> int:
             f"not re-tries, so --retries 1 means 'try once and do not retry'. "
             f"With 0 the load loop never runs, nothing is fetched, and the "
             f"engine reports the browser's blank page as a result.")
+    return number
+
+
+def at_least_one(value) -> int:
+    """argparse `type=` for counts that must be 1 or more (--pages,
+    --concurrency). `--pages 0` used to fetch page 1 anyway and record
+    `pages_requested: 0` in the sidecar, and `--concurrency 0` meant nothing
+    at all; both are usage errors now, named by argparse."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise _argparse.ArgumentTypeError(f"must be an integer, not {value!r}")
+    if number < 1:
+        raise _argparse.ArgumentTypeError(f"must be at least 1, not {number}")
+    return number
+
+
+def non_negative_int(value) -> int:
+    """argparse `type=` for a count that may be 0 but not negative
+    (--proxy-block-retries)."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise _argparse.ArgumentTypeError(f"must be an integer, not {value!r}")
+    if number < 0:
+        raise _argparse.ArgumentTypeError(f"must be 0 or more, not {number}")
+    return number
+
+
+def non_negative_seconds(value) -> float:
+    """argparse `type=` for a delay in seconds (--delay, --retry-delay). A
+    negative sleep raises ValueError deep inside a run instead of at the
+    command line."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise _argparse.ArgumentTypeError(f"must be a number, not {value!r}")
+    if not number >= 0:  # also refuses nan
+        raise _argparse.ArgumentTypeError(f"must be 0 or more, not {value}")
     return number
