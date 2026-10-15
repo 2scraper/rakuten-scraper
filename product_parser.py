@@ -2,7 +2,7 @@
 
 This module IS the site. Everything that knows what Rakuten publishes, how
 it spells a product id, how it paginates and how it refuses lives here; the
-engines carry a dozen named constants and nothing else (§1).
+engines carry a dozen named constants and nothing else.
 
 Where the data actually is
 --------------------------
@@ -29,7 +29,7 @@ the only place on a listing page that states a currency (see `CURRENCY`
 below).
 
 A DETAIL page publishes a different `@type` again — its only JSON-LD is a
-`BreadcrumbList` (§20, proven here on a second site). The listing parser
+`BreadcrumbList` (proven here on a second site). The listing parser
 finds nothing at all on a detail page, which is asserted in the suite rather
 than left to be discovered.
 
@@ -82,7 +82,7 @@ RANKING_HOST = "ranking.rakuten.co.jp"
 HOSTS = (SEARCH_HOST, WWW_HOST, ITEM_HOST, "rakuten.co.jp")
 
 # Hosts that belong to Rakuten Group but are NOT Rakuten Ichiba. Refused with
-# the reason rather than with a generic "unsupported host" — §5: telling a
+# the reason rather than with a generic "unsupported host" — telling a
 # reader their URL "is not a Rakuten site" when it plainly is sends them
 # hunting for a typo.
 OTHER_RAKUTEN_HOSTS = {
@@ -124,19 +124,19 @@ LOCALES = ("ja", "en")
 #
 # The listing payload states NO currency: zero occurrences of `priceCurrency`,
 # `currency` or the string `JPY` across 405 rows. So it is not a fact read
-# off the row (§4 rung 1), and defaulting it would be exactly the "guess
-# presented as a fact" §8 forbids.
+# off the row, and defaulting it would be exactly the "guess
+# presented as a fact" this project never writes.
 #
 # What the site does state, on the same page: `"priceCurrency": "JPY"` in the
 # listing page's own JSON-LD carousel block, and `<meta
 # itemprop="priceCurrency" content="JPY">` on every detail page — a written
-# ISO code, §4 rung 2. `currency_from_page` reads those. This constant is the
+# ISO code, the second-best source. `currency_from_page` reads those. This constant is the
 # allowlist of what a read is allowed to return, not a default, and a row
 # whose page states nothing gets `None`.
 CURRENCY = "JPY"
 CURRENCY_CODES = frozenset(("JPY",))
 
-# The positive structural signal (§8): a page Rakuten actually served is
+# The positive structural signal: a page Rakuten actually served is
 # built out of Rakuten's own asset hosts, and an interstitial is not.
 # Measured across six served pages and three refusals:
 #
@@ -153,7 +153,7 @@ _CATEGORY_PATH_RE = re.compile(r"^/category/(?P<genre>\d+)/?$")
 _SEARCH_PATH_RE = re.compile(r"^/search/mall/(?P<keyword>[^/]+)/?")
 
 SELECTORS = {
-    # Anchored on the URL pattern, never a class (§4). Rakuten's own class
+    # Anchored on the URL pattern, never a class. Rakuten's own class
     # names on the search grid are build hashes.
     "item_link": 'a[href*="item.rakuten.co.jp/"]',
     "tile_price": '[class*="price--"]',
@@ -172,7 +172,7 @@ PAGE_SIZE = 45
 # 150 is exactly the last: it comes back `start: 6705`, which is 6705 + 45 =
 # 6750. Page 151 does not error — see `served_offset`.
 #
-# This is §21's "complete and exhaustive are different words" with Rakuten's
+# This is the "complete and exhaustive are different words" with Rakuten's
 # own arithmetic: one measured query reported `numFound: 3,053,682` against a
 # `subset` of 6,750, so a full 150-page run is a complete run and a 0.2%
 # sample. The sidecar records both numbers rather than only the status.
@@ -203,7 +203,7 @@ _GROUP_SPACES = "    "
 # site's rendered markup: `￥1,234` (fullwidth yen), `¥1,234` (ASCII yen) and
 # `1,234円`. There are no decimal subunits in JPY, so a comma is always a
 # thousands separator here and the "whichever comes last is the decimal
-# point" rule §4 describes does not apply — a bare `1,234` is 1234, never
+# point" rule does not apply — a bare `1,234` is 1234, never
 # 1.234. Used only by the DOM fallback; the payload paths read integers.
 _AMOUNT = (r"\d{1,3}(?:[,%s]\d{3})+|\d+" % _GROUP_SPACES)
 _PRICE_RE = re.compile(
@@ -238,7 +238,7 @@ _PCT_RE = re.compile(r"-?\s*\d{1,3}(?:[.,]\d+)?\s*[%％]"
 # needs neither arrives under HTTP 200. Neither signal is sufficient alone
 # and each covers the other's blind spot.
 #
-# Bounded to a prefix (§20): every refusal body is under 2 KB entire, so
+# Bounded to a prefix: every refusal body is under 2 KB entire, so
 # matching in the first 8 KB covers all of them and cannot let a product
 # title deep in a 981 KB grid read as a marker.
 _MARKER_PREFIX_BYTES = 8192
@@ -246,7 +246,7 @@ _MARKER_PREFIX_BYTES = 8192
 # Whitespace-tolerant on purpose. The bytes Akamai actually sends are
 # `Reference  #18.536a645f.1789976769.70a9bb4f` — with TWO ASCII spaces. A
 # literal `"Reference #"` marker matches none of the three refusals, which is
-# §20's "a marker must survive both spellings of the same page" arriving in a
+# the "a marker must survive both spellings of the same page" arriving in a
 # third costume.
 _AKAMAI_REF_RE = re.compile(
     r"Reference\s*#\s*\d+\.[0-9a-f]+\.\d+\.[0-9a-f]+", re.I)
@@ -258,10 +258,10 @@ BLOCK_MARKERS = (
 
 # Deliberately not carried, each for a measured reason:
 #
-#   cf-turnstile   §8/§19 — the Scraping Browser's auto-solve extension
+#   cf-turnstile   — the Scraping Browser's auto-solve extension
 #                  injects it into every page it loads, so it fires on good
 #                  pages. Measured useless on two sibling sites.
-#   akamai / akam  §18 — a marker that matches every page is worse than no
+#   akamai / akam  — a marker that matches every page is worse than no
 #                  marker. Rakuten is fronted by Akamai, and although its
 #                  served markup happens to reference no Akamai host (0 of 6
 #                  captures), a CDN name is a fact about the site's
@@ -269,7 +269,7 @@ BLOCK_MARKERS = (
 #   Reference #    the literal spelling, for the two-space reason above.
 
 # No captcha is configured anywhere on this site, and that is a measurement
-# rather than an assumption — §18's "did we meet one" is the wrong question,
+# rather than an assumption — the "did we meet one" is the wrong question,
 # so the right one was asked: *is one configured, and would we recognise it
 # if it appeared?*
 #
@@ -282,7 +282,7 @@ BLOCK_MARKERS = (
 # So this set exists to RECOGNISE an escalation, not because one was seen —
 # and none of these strings appears on a served page, so none of them can
 # fire on a good one. What the narrow, honest word "unsolvable" applies to
-# (§19) is that 43-byte deny page: it carries no widget, so there is nothing
+# is that 43-byte deny page: it carries no widget, so there is nothing
 # on it for any solver at any price. That is a property of that page and says
 # nothing about what 2Captcha can solve.
 BOT_CHALLENGE_MARKERS = (
@@ -384,7 +384,7 @@ def site_host(url: str) -> Optional[str]:
 def unsupported_reason(url: str) -> Optional[str]:
     """Why this URL is not an Ichiba URL this scraper reads, or None.
 
-    Refused WITH the reason (§5). Every entry in `OTHER_RAKUTEN_HOSTS` is a
+    Refused WITH the reason. Every entry in `OTHER_RAKUTEN_HOSTS` is a
     real Rakuten property, so "not a Rakuten site" would be false and would
     send the reader looking for a typo they did not make.
     """
@@ -723,7 +723,7 @@ def served_offset(html: Any) -> Optional[int]:
     Both answer 200 with a full, well-formed page of real products. Asking
     for page 151 and being handed `start: 0` is the site stating outright
     that it served page 1, so "asked for N, got something else" is an
-    unambiguous end of listing (§23, on a second site and in a second
+    unambiguous end of listing (on a second site and in a second
     spelling).
     """
     return _int(pagination(html).get("start"))
@@ -846,7 +846,7 @@ def _normalize_amount(raw: str) -> Optional[float]:
 def prices_in(text: str) -> List[float]:
     """Every JPY amount in a piece of rendered text, in order.
 
-    Percentages are removed BEFORE matching, not rejected afterwards (§4):
+    Percentages are removed BEFORE matching, not rejected afterwards:
     Japanese discount badges write `50%OFF` and `-10％` with both ASCII and
     fullwidth signs, and a rejected match has still consumed its
     neighbouring yen symbol.
@@ -884,7 +884,7 @@ def _without_extension_scripts(text: str) -> str:
 def detect_block_marker(html: Any) -> Optional[str]:
     """Which refusal this is, or None.
 
-    Matched over a bounded prefix and with entities unescaped, per §20 — an
+    Matched over a bounded prefix and with entities unescaped — an
     edge can entity-escape the punctuation of its own reference id on the way
     to an HTTP client while a browser parses it back out plain.
     """
@@ -907,7 +907,7 @@ def detect_bot_challenge(html: Any, url: str = "") -> Optional[str]:
     measurement (see `BOT_CHALLENGE_MARKERS`) rather than a shortcut: the
     scan runs, and it runs against the markup with extension-injected
     `<script>` tags removed so a managed browser's own auto-solve hunters
-    cannot be mistaken for the site's (§8).
+    cannot be mistaken for the site's.
     """
     text = _text(html)
     if not text:
@@ -938,8 +938,8 @@ def detect_page_state(html: Any, status: Optional[int] = None,
                       url: str = "") -> str:
     """Which of six states this response is.
 
-    Ordered by how much each signal PROVES, not by what is cheap to check
-    (§17): a payload the site computed outranks a threshold on how many of
+    Ordered by how much each signal PROVES, not by what is cheap to check:
+    a payload the site computed outranks a threshold on how many of
     its own images a page mentions. Getting that backwards is how a sibling
     repo reported exit 3 for a correct answer.
 
@@ -1040,7 +1040,7 @@ def currency_from_page(html: Any) -> Optional[str]:
         item      `<meta itemprop="priceCurrency" content="JPY">`
 
     Checked against an allowlist of real ISO 4217 codes rather than accepted
-    as any three letters (§4), and returning None rather than defaulting to
+    as any three letters, and returning None rather than defaulting to
     JPY when a page states nothing — a defaulted currency is a guess wearing
     a fact's clothes, and this marketplace having only ever traded in yen is
     not the same as this page having said so.
@@ -1091,7 +1091,7 @@ def _brand(hit: dict) -> Optional[str]:
     """The manufacturer, where Rakuten states one as a taxonomy value.
 
     `hit["brand"]` is null on 405 of 405 rows, so the column would be dead
-    if that were the only source (§9). What IS populated is the item's tag
+    if that were the only source. What IS populated is the item's tag
     under the tag group Rakuten itself names ブランド ("brand") — 240 of 405
     rows, 59%.
 
@@ -1130,7 +1130,7 @@ def _review(node: Any) -> Tuple[Optional[float], Optional[int]]:
 
     `review` is NEVER null on this site — an unreviewed product comes back
     `{score: 0, numReviews: 0}`, on 28 of 405 measured rows (6.9%), and a
-    zero written through drags every average a consumer computes (§21).
+    zero written through drags every average a consumer computes.
     Both columns go null together, keyed on the COUNT: a count of zero means
     nobody has rated it, and the score beside it is a sentinel rather than a
     grade of nought.
@@ -1175,7 +1175,7 @@ def _discount(price: Optional[float],
 
     None rather than 0 or a negative when `original` is not above `price`:
     two figures that are not what they were taken for should stop the
-    arithmetic rather than produce a plausible wrong number (§4).
+    arithmetic rather than produce a plausible wrong number.
     """
     if price is None or original is None or original <= price or price < 0:
         return None
@@ -1304,7 +1304,7 @@ def parse_products(html: Any, url: str, page: int = 1,
     whose currency the site had already stated.
 
     The engine therefore reads it once from page 1 and passes it forward.
-    That keeps §4's rule intact rather than bending it: the value is still
+    That keeps the rule intact rather than bending it: the value is still
     something the site said, on this run, about this listing — not a
     constant compiled in. A run that never got page 1 passes nothing and the
     rows carry null, which is the honest answer for a run with no statement
@@ -1323,7 +1323,7 @@ def parse_products(html: Any, url: str, page: int = 1,
       * `in_stock` is True on all 405, because this search does not return
         sold-out items. Deep pages were checked specifically for stale rows
         (pages 80, 120, 149 and 150 of a 142,000-hit genre): 0 sold out. So
-        a False here is unproven — §20 — and the detail route's own
+        a False here is unproven, and the detail route's own
         `availability` microdata is the source that can say otherwise.
     """
     text = _text(html)
@@ -1360,7 +1360,7 @@ def parse_products(html: Any, url: str, page: int = 1,
         if skipped:
             # Said out loud rather than dropped silently: a consumer counting
             # 45 rows against the site's own 52 entries deserves to know
-            # which 7 went and why (§8).
+            # which 7 went and why.
             logger.info(
                 "Skipped %d of %d payload entries on page %d: sponsored "
                 "placements and entries with no item code. Rakuten injects "
@@ -1376,7 +1376,7 @@ def parse_products(html: Any, url: str, page: int = 1,
             "listing", len(hits))
     if kind not in PAGINATED_KINDS + ("category",):
         # The DOM fallback is for LISTING routes, and gating it is not
-        # tidiness — it is the §20 failure, caught by running this function
+        # tidiness — it is the silent-zero failure, caught by running this function
         # against a detail fixture. A detail page links to plenty of other
         # products (breadcrumb rails, "similar items", the shop's other
         # lines), so the fallback happily returned two well-formed phantom
@@ -1395,13 +1395,12 @@ def parse_products(html: Any, url: str, page: int = 1,
 # column worth having is in `ichibaSearch`, and a fallback that reconstructed
 # all of them from build-hashed class names would rot faster than it helped.
 # What it does buy is the difference between "the site changed its payload
-# key" and "there are no products", which is a distinction a reader needs
-# (§20).
+# key" and "there are no products", which is a distinction a reader needs.
 _TILE_MAX_LEVELS = 8
 
 
 def _tile_of(anchor: Any) -> Any:
-    """The outermost ancestor still covering exactly ONE product (§4).
+    """The outermost ancestor still covering exactly ONE product.
 
     Counted by DISTINCT item URL, not by link count: a Rakuten tile links to
     its own product several times (image, title, shop), so a walk that
@@ -1512,7 +1511,7 @@ def _reference_price(island: dict) -> Tuple[Optional[float], Optional[str]]:
     verified on 2 of them (¥10,398 against ¥5,199, and ¥3,476 against
     ¥1,738 — real 50% reductions), and `{"referencePriceVerified": false}`
     with no value at all on the rest. Where a site publishes a "should I
-    show this" flag, use it rather than inferring from the value (§21).
+    show this" flag, use it rather than inferring from the value.
 
     `displayText` is kept as `original_price_label` rather than dropped,
     because WHICH reference price it is matters and a sibling repo learned
@@ -1545,7 +1544,7 @@ def _availability(text: str) -> Optional[bool]:
 
     `availability` is matched against the values that mean available rather
     than tested for `!= OutOfStock`, so a value nobody anticipated reads as
-    "not available" instead of as a sale (§20).
+    "not available" instead of as a sale.
     """
     m = re.search(r'<meta[^>]+itemprop="availability"[^>]+content="([^"]+)"',
                   text)

@@ -40,8 +40,9 @@ run/
 runs/
 results/
 scratch/
-*.page[0-9]
-*.page[0-9][0-9]
+# --dump-html X --pages N writes X.pageN, and --pages goes to 150, so the
+# pattern covers any number of digits rather than stopping at 99.
+*.page[0-9]*
 live_results.zip
 
 # --- debug artifacts the engines drop next to themselves -----------------
@@ -99,7 +100,7 @@ secrets*
 # recoverable only because that repo was private at the time. On 2026-09-17
 # a sibling had an untracked `.env.bak` holding a 32-hex key in a PUBLIC
 # repository, one `git add -A` from publication. Craigslist was fixed then
-# and the fix never reached anyone else, which is §16's rule unapplied: when
+# and the fix never reached anyone else, which is the rule unapplied: when
 # you fix one, check the siblings.
 .env*
 !.env.example

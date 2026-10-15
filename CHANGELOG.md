@@ -12,6 +12,32 @@ their output or their bill.
 
 ## [Unreleased]
 
+> **Behaviour change: a 403 refusal is now a block, not a throttle.** No
+> engine used to pass the HTTP status to the page classifier, and Rakuten
+> renders its 403 refusal and its 503 rate-limit page with the same body, so
+> every 403 was read as a throttle: waited out three times (about 51 s) at
+> the same exit and then reported as a failed page. Playwright and pyppeteer
+> now carry the navigation's status into the classifier, so a 403 is
+> handled as a block (re-fetch or rotate, then exit 3) and a 503 is still
+> waited out. Selenium has no status to give and keeps the recoverable
+> reading.
+>
+> **Behaviour change: output files honour your umask.** `.json`, `.csv` and
+> `.meta.json` were written mode 0600 since the atomic writer arrived in
+> 0.2.1. A new file now gets `0666` minus the umask (0644 under the usual
+> 022), and rewriting an existing file keeps that file's mode.
+>
+> **Behaviour change: more numeric flags are checked at the command line.**
+> `--pages 0`, `--concurrency 0`, a negative `--delay`, `--retry-delay` or
+> `--proxy-block-retries` are now usage errors (exit 2) naming the flag, in
+> all three engines; `scraper_api_client.py` rejects a negative `--retries`
+> or `--retry-delay` and a `--timeout` below 1. `--pages 0` used to fetch
+> page 1 anyway and record `pages_requested: 0`.
+>
+> **Behaviour change: the canary is red whenever it did not test the site.**
+> A blocked (exit 3) or partial (exit 6) run used to end the job green with
+> a warning. Every non-zero exit now fails it.
+>
 > **Behaviour change:** `--retries 0` is now a usage error (exit 2). It used
 > to be accepted and made the page-load loop unreachable, so nothing was
 > fetched and the engine reported the browser's own blank page as a result:
@@ -25,9 +51,41 @@ their output or their bill.
   `range(1, retries + 1)`, so 0 never runs it and the engine judged
   `about:blank`. Three third-party audits of this family ran exactly that and
   reported a working scraper as broken. `--retries` now goes through
-  `page_flow.attempts` in every entry point; a check reads the source of each
-  one and calls the validator, so a new engine declaring the flag with a
-  plain int fails the suite.
+  `page_flow.attempts` in all three browser engines; a check reads the
+  source of each one and calls the validator, so a new engine declaring the
+  flag with a plain int fails the suite. (`scraper_api_client.py --retries`
+  counts EXTRA attempts, so 0 stays legal there.)
+- **pyppeteer crashed with `AttributeError` when a page kept failing to load
+  and no proxy was configured.** Its load-failure branch called
+  `pool.advance()` without checking for a pool. It now rotates only for an
+  unusable exit and only when there is another exit to go to, as the
+  Playwright and Selenium engines already did.
+- **A failing captcha solver could be asked twice for one page.** The first
+  of the two solve call sites counted only successful solves against the
+  per-page allowance. Both now count every attempted purchase.
+- **The static reCAPTCHA detector missed a v2 widget** in a saved page that
+  carried only the `g-recaptcha` container or the `api2/anchor` frame,
+  without the literal `grecaptcha`, so a `--dump-html` capture of one was
+  reported as having no captcha. No captcha has been observed on Rakuten;
+  this only affects diagnosis.
+- **Help text and comments described another site's refusal** (an HTTP/2
+  stream reset, a headless-only "Access Denied" page). The `--solve-captcha`
+  help in all three engines and the exit-code comments now describe
+  Rakuten's own: a 43-byte Akamai deny under HTTP 200, a branded page under
+  HTTP 403, and the same page under HTTP 503 as a rate limit.
+- **The canary's exit-5 message** said a remote API error was impossible;
+  exit 5 means the content was never obtained, which a transport failure can
+  cause on any run.
+- `.gitignore` covered `--dump-html` page dumps only up to `.page99`;
+  `--pages` goes to 150. `requirements-selenium.txt` mentioned a
+  `--chromedriver` flag that does not exist. `.env.example` no longer gives
+  a fixed lifetime for Scraping Browser credentials.
+- Comments and docstrings no longer cite the numbered sections of internal
+  notes the public cannot read; each rule is stated in this repository's own
+  words, and the suite fails if such a citation comes back.
+- The CI sample-output check runs from one implementation
+  (`ci_checks.py --sample-check`) instead of also as an inline copy, and the
+  wording scan now covers `smoke_test.py` itself.
 
 ## [0.2.1] — 2026-09-30
 

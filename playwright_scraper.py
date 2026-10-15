@@ -190,7 +190,7 @@ class PageOutcome:
     # Rakuten's own arithmetic about the query: total_results,
     # pages_available, reachable_max, capped_by_site, pages_beyond_cap. In
     # the sidecar because on this site "complete" and "exhaustive" are wildly
-    # different words and a status alone would be lying by omission (§21).
+    # different words and a status alone would be lying by omission.
     cap: Optional[dict] = None
     # Whether the SERVER served the page we asked for, read off
     # `pagination.start` rather than trusted from the request. False means
@@ -297,7 +297,7 @@ def _advertised_next_hrefs(page, page_num: int) -> List[str]:
     Rakuten DOES advertise its own page links — nine of them on page 1 of a
     150-page query, absolute, spelling `?p=2` through `?p=9` — and it
     publishes **no `<link rel="next">` at all**, on 3 of 3 captures. Only
-    `rel="canonical"`. So §7's most-durable layer simply does not exist on
+    `rel="canonical"`. So the most-durable layer simply does not exist on
     this site and the selector reaches for a build artefact because there is
     nothing better to reach for; you cannot order signals by durability when
     the site declines to publish the durable one.
@@ -413,7 +413,7 @@ def _same_url(a: str, b: str) -> bool:
     reproduced inside one engine.
 
     On this site the comparison has to strip a long tracking tail: a listing
-    anchor arrives with `?extParam=…keyword=kopi&search_id=…&src=search` and
+    anchor arrives with a tracking query string (`?l2-id=…`, `scid=…` and similar) and
     a detail page's own canonical arrives with a UTM triple, so two views of
     one page never match unless both sides are cleaned.
     """
@@ -573,12 +573,10 @@ def _connect_remote(pw, args):
     # challenges inside the browser: https://2captcha.com/scraper/browser-api/api
     # Tried first when --cdp-endpoint is set; this script's own detect+solve
     # logic still runs as a fallback if the endpoint does not support it.
-    # Note it does NOT cover this site's refusal, which is not a challenge:
-    # Akamai answers a headless browser with a 394-byte "Access Denied" that
-    # has nothing to solve on it, and a real window rather than a better
-    # address is the answer. No challenge has ever been observed here; this is
-    # wired
-    # up because one can appear between deploys.
+    # Note it does NOT cover this site's refusals, which are not challenges:
+    # Akamai's 43-byte deny and the branded 403 page have nothing to solve on
+    # them. No challenge has ever been observed here; this is wired up
+    # because one can appear between deploys.
     try:
         cdp_session = context.new_cdp_session(page)
         cdp_session.send("Captcha.setAutoSolve", {"autoSolve": True, "options": [{"type": "*"}]})
@@ -659,8 +657,12 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
     return None
 
 
-def handle_captcha_if_present(page, args) -> bool:
+def handle_captcha_if_present(page, args, purchases=None) -> bool:
     """Detect and solve a challenge. True if something was solved.
+
+    `purchases`, when given, gets one entry appended immediately BEFORE the
+    solver is asked for a token, so a caller can count attempted purchases
+    (successful or not) against the page's solve allowance.
 
     Runs after EVERY navigation, for ANY page — not scoped to one URL. The
     static-HTML and runtime reCAPTCHA detectors are run and reconciled
@@ -671,7 +673,7 @@ def handle_captcha_if_present(page, args) -> bool:
     honest sentences about it. **This repo implements reCAPTCHA v2/v3;** if
     Rakuten ever renders an enterprise reCAPTCHA or a Turnstile, 2Captcha
     solves both and this client would need the matching task type added —
-    that is a TODO here, not a limit of the product (§19).
+    that is a TODO here, not a limit of the product.
 
     What is measured is narrower: no captcha of any kind is configured
     anywhere on rakuten.co.jp. Zero reCAPTCHA, hCaptcha, Turnstile,
@@ -724,6 +726,8 @@ def handle_captcha_if_present(page, args) -> bool:
                        "solved — continuing with whatever the page already "
                        "holds.")
         return False
+    if purchases is not None:
+        purchases.append(challenge.kind)
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
                                api_version=args.captcha_api,
@@ -758,7 +762,7 @@ def _parse_for_mode(html: str, url: str, args, page_num: int = 1) -> List:
     restarts at 1 on every page: without the page number beside it, a row
     from page 2 claims the same position as one from page 1 and the two are
     indistinguishable in the output. A sibling repo's first live run wrote
-    120 rows all labelled page 1 for exactly that reason (§18).
+    120 rows all labelled page 1 for exactly that reason.
     """
     if args.mode == "product":
         return parse_product_page(html, url, page=page_num,
@@ -828,9 +832,17 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # Retry a navigation timeout rather than ending the run on it. One
         # network flap on page 12 of 50 should not break the loop.
         load_failed, exit_failed = False, None
+        # The HTTP status of the navigation, carried into the classifier.
+        # On this site it is the only thing that separates a 403 refusal
+        # from a 503 throttle: Rakuten renders both with the same branded
+        # body, and without the status the classifier has to read that body
+        # as the recoverable one (a throttle).
+        status = None
         for attempt in range(1, args.retries + 1):
             try:
-                session.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                resp = session.page.goto(url, wait_until="domcontentloaded",
+                                         timeout=60000)
+                status = resp.status if resp is not None else None
                 load_failed = False
                 break
             except (PWTimeout, PWError) as e:
@@ -868,17 +880,26 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # counted only at the second call site, so `SOLVES_PER_PAGE = 1`
         # read like an enforced cap in every repo of this family while one
         # page could buy two solves — measured at three on a site where a
-        # challenge rendered on every fetch (§23). Invisible wherever a
+        # challenge rendered on every fetch. Invisible wherever a
         # challenge is rare, which is everywhere until it is not.
         if page_flow.solve_budget(solves_bought):
-            if handle_captcha_if_present(session.page, args):
-                solves_bought += 1
+            # Counted when a purchase is ATTEMPTED, not when it succeeds: a
+            # solver that raised was still asked to work, and counting only
+            # successes let one page reach the solver twice. A page with no
+            # captcha on it spends nothing here.
+            purchases = []
+            solved = handle_captcha_if_present(session.page, args,
+                                               purchases=purchases)
+            solves_bought += len(purchases)
+            if solved:
                 # A solve navigated the page. Give the destination a moment
-                # before judging what came back.
+                # before judging what came back, and forget the status of the
+                # navigation it replaced.
+                status = None
                 session.page.wait_for_timeout(1000)
 
         html = _content_when_settled(session.page) or ""
-        state = _classify(session.page, html)
+        state = _classify(session.page, html, status)
 
         # "Not painted yet" is not a fault, and telling it apart from one is
         # what the first live search run of this engine got wrong. A CATEGORY
@@ -913,13 +934,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 logger.info("The grid still had not painted after %.0fs "
                             "(%d match(es)).", wait_timeout / 1000, found)
             html = _content_when_settled(session.page) or html
-            state = _classify(session.page, html)
+            state = _classify(session.page, html, status)
 
         # No interstitial-settling step here, and its absence is measured
         # rather than an omission. This site has no interstitial to settle: a
-        # refused request gets a 394-byte "Access Denied" with no markup at
-        # all, so there is nothing to wait out and nothing to reclassify. See
-        # page_flow's "There is no block page".
+        # refused request gets a 43-byte deny or a branded 403 page, so there
+        # is nothing to wait out and nothing to reclassify. A 503 throttle is
+        # handled below by waiting at the same exit.
         #
         # The paid path is reached only for state "challenge", which NO
         # capture of this site has ever produced. It is wired up because a
@@ -930,9 +951,12 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 and page_flow.solve_budget(solves_bought)):
             solves_bought += 1
             if handle_captcha_if_present(session.page, args):
+                # The solve reloaded the page; the status of the navigation
+                # before it no longer describes what is on screen.
+                status = None
                 session.page.wait_for_timeout(1000)
                 html = _content_when_settled(session.page) or html
-                state = _classify(session.page, html)
+                state = _classify(session.page, html, status)
                 # The VERIFIED outcome, and the only one worth reporting: a
                 # "ready" task result is not evidence the token works. This
                 # line is what says whether the money bought anything.
@@ -1020,8 +1044,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # solve, and that a proxy is probably not the answer either. Akamai
         # refuses this site with a 43-byte body whose whole content is
         # `Reference  #18.…` — no widget, nothing for any solver at any
-        # price — and it arrives under **HTTP 200**, so the status code is
-        # not the signal.
+        # price — and it arrives under **HTTP 200**. A route Rakuten refuses
+        # outright answers instead with its branded page under HTTP 403, and
+        # that status is what tells it apart from the same page under 503,
+        # which is a throttle and never reaches this branch.
         #
         # The dump is written even when it is empty, because "43 bytes" is
         # itself the diagnosis here and a reader who finds no file at all
@@ -1115,7 +1141,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # so this runs only for a state the policy has already given up on and
     # only REFINES the reason.
     #
-    # The marker set itself is chosen the same way (§18): every candidate
+    # The marker set itself is chosen the same way: every candidate
     # was counted on pages Rakuten plainly served before any of it was
     # trusted. `cf-turnstile` is excluded because the Scraping Browser's own
     # auto-solve extension injects it into every page it loads, and a bare
@@ -1152,7 +1178,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # with 45 real products, and `/category/{id}/?p=2` answers 200 with page
     # 1 without even redirecting. A run that trusted its own request would
     # re-collect page 1 for as long as it was asked to and report a
-    # complete, entirely duplicate file (§23).
+    # complete, entirely duplicate file.
     if args.mode == "listing":
         # Compared against the page the fetched URL actually ASKS for, not
         # against the loop's counter — a run started on a URL that already
@@ -1202,7 +1228,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # rather than guessed. Both numbers are recorded, because on this site
     # they are wildly different and only having both makes the run honest:
     # one measured query reported `numFound` 3,053,682 against a `subset` of
-    # 6,750, so a full run of it is complete AND a 0.2% sample (§21).
+    # 6,750, so a full run of it is complete AND a 0.2% sample.
     #
     # `numFound` is also a LIVING number and is recorded as the site's
     # answer at this moment rather than asserted against — three fetches of
@@ -1265,8 +1291,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         # payload carries the price and the rendered tile prints that same
         # number formatted, so `price_source` is "state" on every listing row
         # and a confirmation threshold would describe nothing. Porting a
-        # sibling repo's overlay would be dead code that looks load-bearing
-        # (§4).
+        # sibling repo's overlay would be dead code that looks load-bearing.
         #
         # What IS worth reporting is the share of rows Rakuten publishes a
         # was-price for, because on the listing route the honest answer is
@@ -1656,7 +1681,7 @@ def scrape(args) -> int:
     # the query, and on this site that is not optional decoration: a
     # `status: complete` run of a query the site caps at 6,750 of 3,053,682
     # matches is complete and is a 0.2% sample, and a sidecar that said only
-    # "complete" would be lying by omission (§21). It also gives
+    # "complete" would be lying by omission. It also gives
     # `diff_runs.py` the third meaning of `removed` — not delisted, not
     # un-fetched, but outside this run's slice of a capped result set.
     extra = None
@@ -1730,7 +1755,7 @@ def parse_args():
                         "the request — the browsed URL is in the run's "
                         "sidecar. Pass this to override it with a label of "
                         "your own.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=page_flow.at_least_one, default=1,
                    help="Number of listing pages to crawl (45 products "
                         "each). Applies to --mode listing; a product page is "
                         "one page. Rakuten caps EVERY query at 6,750 results "
@@ -1738,8 +1763,8 @@ def parse_args():
                         "for page 151 gets page 1 again with HTTP 200, so a "
                         "run stops at the cap and the sidecar records both "
                         "numbers.")
-    p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--delay", type=page_flow.non_negative_seconds, default=2.0, help="Delay between pages, seconds")
+    p.add_argument("--concurrency", type=page_flow.at_least_one, default=1, metavar="N",
                    help="Fetch pages through N parallel workers (default 1 — "
                         "unchanged sequential behaviour). Each worker runs its "
                         "own browser and holds its own proxy exit, so N>1 "
@@ -1751,7 +1776,7 @@ def parse_args():
                         "that comes back EMPTY is not retried — see "
                         "page_flow.STATE_POLICY — because an empty hub "
                         "category is a correct answer, not a fault.")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=page_flow.non_negative_seconds, default=2.0,
                    help="Seconds before the first page-load retry, doubling "
                         "thereafter (default 2.0)")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
@@ -1781,7 +1806,7 @@ def parse_args():
     p.add_argument("--proxy-shuffle", action="store_true",
                    help="Shuffle the pool at startup, so concurrent runs do not "
                         "all begin on the first exit in the file.")
-    p.add_argument("--proxy-block-retries", type=int,
+    p.add_argument("--proxy-block-retries", type=page_flow.non_negative_int,
                    default=page_flow.BLOCK_RETRIES_WITH_POOL,
                    help="When a page comes back refused, retry it from this "
                         "many OTHER exits before giving up (default %d, from "
@@ -1834,10 +1859,12 @@ def parse_args():
                    help="when-blocked (default): only pay to solve a "
                         "reCAPTCHA if the content is not already readable. "
                         "always: solve whenever one is detected. Neither "
-                        "setting touches this site's refusal, which is not a "
-                        "page at all — the HTTP/2 stream is reset and nothing "
-                        "arrives — so no solve helps there and none is "
-                        "attempted or billed. In fact NO challenge has ever "
+                        "setting touches Rakuten's refusals (a 43-byte "
+                        "Akamai deny under HTTP 200, a branded page under "
+                        "HTTP 403, or the same page under HTTP 503 as a rate "
+                        "limit): none carries a widget, so no solve helps "
+                        "and none is attempted or billed. In fact NO "
+                        "challenge has ever "
                         "been observed on this site; the path is wired up "
                         "because a bot manager can be switched on between "
                         "deploys.")
@@ -1857,7 +1884,7 @@ def parse_args():
                         "well as failure. Useful when the row count is right but "
                         "a column comes back empty — see TROUBLESHOOTING.md.")
     # HEADLESS is the default, and here that is measured in BOTH directions
-    # rather than inherited — §19's rule, because a sibling site answered 0
+    # rather than inherited — the rule, because a sibling site answered 0
     # of 4 headless against 4 of 4 headful and the family default had been
     # headless simply because headless is what a scraper does.
     #
@@ -1907,7 +1934,7 @@ def parse_args():
         # Rakuten Group property like ranking.rakuten.co.jp or Rakuten Books
         # gets a different sentence from a typo, because "is not a Rakuten
         # site" would be FALSE for those and would send the reader hunting
-        # for a misspelling that is not there (§5).
+        # for a misspelling that is not there.
         p.error(unsupported_reason(args.url)
                 or f"{args.url!r} is not a Rakuten Ichiba URL this scraper "
                    f"reads.")
