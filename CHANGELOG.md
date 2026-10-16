@@ -12,6 +12,8 @@ their output or their bill.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-16
+
 > **Behaviour change: a 403 refusal is now a block, not a throttle.** No
 > engine used to pass the HTTP status to the page classifier, and Rakuten
 > renders its 403 refusal and its 503 rate-limit page with the same body, so
@@ -352,7 +354,8 @@ And two closed while building it:
   calling it page 1 of the run, so `--url '...?p=2' --pages 1` threw away 45
   perfectly good rows as "the end of the listing".
 
-[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/2scraper/rakuten-scraper/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.3.0
 [0.2.1]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.2.1
 [0.2.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.2.0
 [0.1.0]: https://github.com/2scraper/rakuten-scraper/releases/tag/v0.1.0
