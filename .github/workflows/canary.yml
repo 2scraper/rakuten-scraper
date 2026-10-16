@@ -8,12 +8,12 @@ name: canary
 #
 # THIS CANARY NEEDS NO SECRETS, AND THAT IS THE POINT
 # ---------------------------------------------------
-# It runs a real three-page scrape from a bare GitHub runner, daily, and it
+# It runs a real three-page scrape from a bare GitHub runner, weekly (Mondays), and it
 # is EXPECTED TO BE GREEN. That is not a convenience — it is what keeps this
 # repo's central claim honest. The README says you need no key, no proxy and
 # no account to read this site's listings; this workflow is that claim, under
-# test, every morning. If Rakuten ever puts the listing routes behind
-# something, the badge goes red the next day and the claim is retested
+# test, every Monday. If Rakuten ever puts the listing routes behind
+# something, the badge goes red on the next weekly run and the claim is retested
 # without anyone having to remember to.
 #
 # Measured 2026-09-21 from one datacentre address, no credentials of any
@@ -34,14 +34,14 @@ name: canary
 #     canary.
 #   * the 2Captcha Scraper API path has never been run against this site —
 #     no key was available when the repo was written. A job that needs a
-#     secret nobody has set would skip every day and test nothing, so it is
+#     secret nobody has set would skip on every run and test nothing, so it is
 #     honest documentation in scraper_api_client.py's docstring instead.
 
 on:
   schedule:
     # Early UTC, which is mid-morning in Japan — the site is awake and its
     # campaign banners have rolled over, so a run here sees what a user sees.
-    - cron: "17 2 * * *"
+    - cron: "17 2 * * 1"
   workflow_dispatch:
 
 jobs:
