@@ -12,6 +12,10 @@ their output or their bill.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary now runs weekly (Mondays 02:17 UTC) instead of daily, and on a manual dispatch.
+
 ## [0.3.0] — 2026-10-16
 
 > **Behaviour change: a 403 refusal is now a block, not a throttle.** No

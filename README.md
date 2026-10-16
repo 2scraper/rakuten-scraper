@@ -63,9 +63,8 @@ Two more things follow from that table, and both are easy to get wrong:
   `HeadlessChrome/153.0.8010.12` — and Akamai served it anyway.
 
 The canary in this repository is that claim under test: a real three-page
-scrape, daily, from a bare GitHub runner, with **no secrets**. If Rakuten ever
-puts the listing routes behind something, the badge above goes red the next
-morning: a blocked, partial or empty run fails the job rather than passing
+scrape, weekly (Mondays), from a bare GitHub runner, with **no secrets**. If Rakuten ever
+puts the listing routes behind something, the badge above goes red on the next weekly run: a blocked, partial or empty run fails the job rather than passing
 with a warning.
 
 ## Install

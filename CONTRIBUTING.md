@@ -102,13 +102,13 @@ Then the rest of the presentation, in the order that matters:
 
 1. `python3 smoke_test.py` green, and the canary dispatched at least once by
    hand before anyone trusts the badge. This canary needs **no secret** and
-   runs daily on a schedule, which is deliberate: the README's central claim
+   runs weekly (Mondays) on a schedule, which is deliberate: the README's central claim
    is that you need no key, no proxy and no account to read this site's
    listings, and a scheduled, ungated, real three-page run is that claim
-   under test every morning. A canary that CAN pass without a credential
+   under test every Monday. A canary that CAN pass without a credential
    must never be gated on one, and any run that did not really test the
    site (blocked, partial, nothing obtained, zero rows) fails the job, so a
-   green badge always means real rows were parsed that day.
+   green badge always means real rows were parsed on that run.
 
    Note that `workflow_dispatch` needs the workflow to exist on the DEFAULT
    branch: from a feature branch `gh workflow run` answers
