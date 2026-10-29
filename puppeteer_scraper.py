@@ -64,8 +64,8 @@ from product_parser import (parse_products, parse_product_page,
                             site_host, is_supported_host, total_results,
                             total_pages, search_header, unsupported_reason,
                             shop_metadata, CURRENCY, served_by_rakuten)
-from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
-                           SOURCE_DEFAULT)
+from output_writer import (dedupe_by_key, ensure_output_dir, finish_run,
+                           EXIT_API_ERROR, SOURCE_DEFAULT)
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
@@ -229,9 +229,19 @@ class PageOutcome:
     # around: a detail page is 285 KB and a scrolled listing nearly 1 MB.
     shop_facts: Optional[dict] = None
 
+    # The page stayed HTTP 503 after every wait in the throttle budget. Its
+    # own flag: it was neither blocked nor a failed load, and without it the
+    # page counted as READ with no rows — `complete`, exit 0, page 1 missing.
+    throttled: bool = False
+
     @property
     def ok(self) -> bool:
-        return not self.load_failed and self.blocked_by is None
+        return (not self.load_failed and not self.throttled
+                and self.blocked_by is None)
+
+
+class BrowserStartError(RuntimeError):
+    """pyppeteer's own browser would not start (see `_Session.open`)."""
 
 
 # Every `scheme://user:pass@` in a string, however many times it occurs.
@@ -335,11 +345,35 @@ class _Session:
         # the event loop here lives on a worker thread. Teardown is handled by
         # _Session.close() in scrape()'s finally block instead, so nothing is
         # lost — the browser is still closed on both success and failure.
-        self.browser = self.bridge.run(
-            launch(headless=self.args.headless, args=launch_args,
-                   ignoreHTTPSErrors=True, handleSIGINT=False,
-                   handleSIGTERM=False, handleSIGHUP=False, **launch_kwargs),
-            timeout=CONNECT_TIMEOUT * 2)
+        try:
+            self.browser = self.bridge.run(
+                launch(headless=self.args.headless, args=launch_args,
+                       ignoreHTTPSErrors=True, handleSIGINT=False,
+                       handleSIGTERM=False, handleSIGHUP=False,
+                       **launch_kwargs),
+                timeout=CONNECT_TIMEOUT * 2)
+        except Exception as e:  # noqa: BLE001 — pyppeteer raises BrowserError, OSError, timeouts
+            # REPORTED, not raised through. "Browser closed unexpectedly" is
+            # what pyppeteer says when its own Chromium will not start, and
+            # it arrived as a 30-line traceback and exit 1 on an Apple
+            # Silicon Mac, where the README's install line then gave no hint
+            # that `--chromium-path` exists. Exit 5, as for the remote
+            # browser that will not connect: the page was never requested.
+            detail = "%s: %s" % (type(e).__name__, str(e).strip() or "no message")
+            if self.args.chromium_path:
+                raise BrowserStartError(
+                    "could not start the browser at --chromium-path %s (%s). "
+                    "Check that the path is a Chrome or Chromium executable "
+                    "for this machine." % (self.args.chromium_path, detail)
+                ) from None
+            raise BrowserStartError(
+                "could not start pyppeteer's browser (%s). Its bundled "
+                "Chromium does not start on every machine — measured on "
+                "Apple Silicon, where it is an x86_64 build. Pass "
+                "--chromium-path with a Chrome or Chromium of your own, e.g. "
+                "--chromium-path \"/Applications/Google Chrome.app/Contents/"
+                "MacOS/Google Chrome\"; or use playwright_scraper.py, which "
+                "ships a build that does." % detail) from None
         self.page = self.bridge.run(self.browser.newPage())
         # NO setUserAgent here, and this is the most expensive measurement
         # in this repo. It is a deliberate DIVERGENCE from the Playwright
@@ -631,6 +665,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # `throttled` branch below.
     throttle_spent = 0
     html, state, load_failed = None, "ok", False
+    last_error = ""
 
     # The loop may be re-entered for a throttle without consuming a
     # block attempt, so the budget is a while rather than a for.
@@ -657,6 +692,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 # does; a timeout and an unusable exit want opposite
                 # responses, so they are told apart by that text.
                 text = str(e)
+                last_error = page_flow.first_line(e)
                 if any(marker in text for marker in _PROXY_ERROR_MARKERS):
                     logger.warning("Exit %s is unusable (%s).",
                                    mask(pool.current) if pool else "(none)", text[:120])
@@ -666,15 +702,24 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                     pause = args.retry_delay * (2 ** (attempt - 1))
                     logger.warning("Failed to load %s (attempt %d/%d: %s) — "
                                    "retrying in %.1fs.", url, attempt,
-                                   args.retries, text[:120], pause)
+                                   args.retries, last_error, pause)
                     time.sleep(pause)
 
-        # Rotate only for an UNUSABLE exit and only when there is another
-        # one to go to, as the Playwright engine does. Without a pool
-        # `block_retries` is still 1, so this branch used to be reachable
-        # with pool=None and crashed on `pool.advance` with AttributeError
-        # on any repeated load failure. A plain timeout is not the exit's
-        # fault: the retries above already spent the budget for it.
+        # Rotate when there is another exit to go to, as the Playwright
+        # engine does. Without a pool `block_retries` is still 1, so this
+        # branch used to be reachable with pool=None and crashed on
+        # `pool.advance` with AttributeError on any repeated load failure.
+        #
+        # Every retry on THIS exit is spent by now. A failure that is not on
+        # the proxy-error list (a dropped TLS handshake, a hung gateway) is
+        # then treated like one: with other exits in the pool the exit is the
+        # one thing left to change, bounded by --proxy-block-retries. The run
+        # used to end here as `partial` with working exits unused.
+        if load_failed and not exit_failed:
+            exit_failed = True
+            logger.warning("Exit %s: %d failed attempt(s), last: %s.",
+                           mask(pool.current) if pool else "(none)",
+                           args.retries, last_error)
         if exit_failed and has_pool and block_attempt < block_retries:
             pool.advance("unusable exit")
             session.relaunch()
@@ -822,11 +867,18 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 time.sleep(pause)
 
     if load_failed:
-        logger.error("Gave up loading %s after %d attempt(s).", url, args.retries)
+        logger.error("Gave up loading %s after %d attempt(s): %s", url,
+                     args.retries, last_error or "no error text")
         outcome.load_failed = True
         return outcome
 
     outcome.state = state
+
+    if state == "throttled":
+        # Only reachable once the throttle budget is spent (an earlier wait
+        # `continue`s above). A failed page, not a read one.
+        outcome.throttled = True
+        return outcome
 
     if state == "blocked":
         # There is no challenge on this site to solve. Akamai's refusals here
@@ -1042,6 +1094,13 @@ _PROXY_ERROR_MARKERS = (
 
 
 def scrape(args) -> int:
+    # Before a single request: a missing `--out` directory used to surface
+    # only when the rows were written, after the whole run, as a traceback.
+    try:
+        ensure_output_dir(args.out, args.dump_html)
+    except OSError as exc:
+        logger.error("%s", exc)
+        return 2   # bad usage, like every other flag the parser refuses
     outcomes: List[PageOutcome] = []
     seen_keys = set()
     blocked = False
@@ -1073,8 +1132,9 @@ def scrape(args) -> int:
         outcomes.append(first)
 
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{first.blocked_by}")
+            stop_reason = page_flow.failure_stop_reason(
+                load_failed=first.load_failed, throttled=first.throttled,
+                blocked_by=first.blocked_by)
             blocked = first.blocked_by is not None
         elif args.mode == "listing":
             seen_keys.update(p.sku for p in first.products if p.sku is not None)
@@ -1116,8 +1176,10 @@ def scrape(args) -> int:
                 outcome = _fetch_one_page(session, args, pool, page_num, url)
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
+                    stop_reason = page_flow.failure_stop_reason(
+                        load_failed=outcome.load_failed,
+                        throttled=outcome.throttled,
+                        blocked_by=outcome.blocked_by)
                     blocked = outcome.blocked_by is not None
                     break
 
@@ -1417,6 +1479,11 @@ def parse_args():
                         "--cdp-endpoint, where the remote browser decides.")
     args = p.parse_args()
     env_config.apply(args)
+    conflicts = page_flow.cdp_conflicts(
+        args, env_config.given_on_command_line("proxy", "proxy_file",
+                                               "concurrency"))
+    if conflicts:
+        p.error(" ".join(conflicts))
     if args.fingerprint and not args.twocaptcha_key:
         p.error("--fingerprint needs --twocaptcha-key (the Fingerprint API "
                 "uses the same key, though it is a separate subscription "
@@ -1467,6 +1534,9 @@ if __name__ == "__main__":
     except ProxyError as e:
         logger.error("%s", e)
         sys.exit(2)
+    except BrowserStartError as e:
+        logger.error("%s", e)
+        sys.exit(EXIT_API_ERROR)
     except Exception as e:
         # A remote browser that will not accept the connection is a REMOTE
         # API failure (exit 5), not a crash in this code (exit 1) and not bad

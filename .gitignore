@@ -61,7 +61,14 @@ captures/
 # Both live outside the repo on purpose: the landing page is published
 # elsewhere, and a downloaded 2captcha proxy list is a credential file.
 index.html
-proxylist.txt
+# A proxy list is a file of logins and passwords, however it is named: the
+# README's own example is `--proxy-file exits.txt` in the clone's root, and
+# `proxylist.txt` alone left that one untracked but NOT ignored, one
+# `git add .` from a commit. Ignored by kind rather than by one name.
+proxylist*.txt
+proxies*.txt
+exits*.txt
+proxy*.list
 
 # --- caches --------------------------------------------------------------
 __pycache__/

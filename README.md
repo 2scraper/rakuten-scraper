@@ -36,10 +36,16 @@ in Helsinki, nothing else changed between the rows:
 
 | Client | Result |
 |---|---|
-| `curl`, curl's own User-Agent | **200**, 92 KB, 45 products |
-| `curl`, a Chrome User-Agent | **200**, **43 bytes**, `Reference  #…` |
+| `curl`, curl's own User-Agent | **200**, 919 KB, 45 products |
+| `curl`, a Chrome User-Agent | **200**, **42-43 bytes**, `Reference  #…` |
 | headless Chromium (real UA, real TLS) | **200**, 855 KB, 45 products |
 | headful Chromium | **200**, 969 KB, 45 products |
+
+The two `curl` rows were repeated on 2026-10-29 from a Hetzner datacentre
+address and gave the same answer (919,197 bytes and 45 parsed products; 42
+bytes, the length varying with the reference id), which also replaced the
+size this table first carried for the first row. The two Chromium rows are
+from 2026-09-21 and were not repeated.
 
 Read it by column: the address is identical in all four and the *consistency
 of the client* decides everything. curl claiming to be curl is served; curl
@@ -86,6 +92,15 @@ pip install -r requirements.txt -r requirements-puppeteer.txt   # or
 
 `pip install .[playwright]` is equivalent.
 
+pyppeteer downloads a Chromium of its own, and that build does not start on
+every machine (seen on an Apple Silicon Mac, where it is an x86_64 build and
+ends with `Browser closed unexpectedly`). Pass `--chromium-path` with a Chrome
+or Chromium that you installed, e.g. `--chromium-path "/Applications/Google
+Chrome.app/Contents/MacOS/Google Chrome"`. Without it the run now ends with
+that advice and exit 5 rather than a traceback; the Apple Silicon case itself
+was reported by an audit and was not reproduced here (Linux, a browser that
+exits at once, gave the same error and the same handling).
+
 ## Usage
 
 ```bash
@@ -97,7 +112,8 @@ python3 playwright_scraper.py \
 python3 playwright_scraper.py \
   --url "https://www.rakuten.co.jp/category/100356/" --pages 5 --format csv
 
-# One product: per-variant prices, a variant count, and a verified was-price
+# One product: per-variant prices and a variant count (and a was-price while
+# the shop's own sale is verified: see the note under "Measured")
 python3 playwright_scraper.py --mode product \
   --url "https://item.rakuten.co.jp/sawaicoffee-tea/solandluna/"
 
@@ -106,8 +122,11 @@ python3 playwright_scraper.py \
   --url "https://search.rakuten.co.jp/search/mall/コーヒー/?min=1000&max=3000" \
   --pages 3
 
-# Spread a long run across exits (and see the note on 503 below)
-python3 playwright_scraper.py --url "…" --pages 50 \
+# Spread a long run across exits (and see the note on 503 below). Put one
+# proxy URL per line in the list; exits*.txt, proxies*.txt and proxylist*.txt
+# are git-ignored, because that file holds logins and passwords.
+python3 playwright_scraper.py \
+  --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 50 \
   --proxy-file exits.txt --proxy-rotate per-page --delay 4
 ```
 
@@ -217,11 +236,21 @@ Three columns are worth explaining because this site is unusual:
 | 2 | bad usage |
 | 3 | blocked before parsing |
 | 4 | served a page, zero products |
-| 5 | remote API error |
+| 5 | the content was never obtained: a remote API error, a dead exit, a load that never completed, a page that stayed throttled after every wait |
 | 6 | partial run |
 
 A run that finds nothing **writes nothing** — `--allow-empty` is the opt-out
-— so a failed run cannot replace last night's good output with `[]`.
+— so a failed run cannot replace last night's good output with `[]`. With
+the opt-out the empty file IS written, but the exit code does not change: a
+run that found nothing still exits 4 and its sidecar says `status: failed`.
+
+`--out` may name a directory that does not exist yet: it is created before
+the first request, and one that cannot be created is a usage error (exit 2)
+instead of a traceback after the whole run.
+
+A page that stays HTTP 503 after every wait is a **failed page**
+(`stop_reason: throttled`, `pages_failed` names it): exit 6 if other pages
+produced rows, 5 if none did. It is never read as a page with no products.
 
 **All three files are replaced atomically.** Each is written to a temporary
 file beside it and renamed over the old one, so a crash, a kill or a full
@@ -290,8 +319,9 @@ while the numbers still parse.
 `?p=N`, 45 products a page, and **two routes that lie past the end.**
 
 Rakuten does not error past a listing's last page. `?p=151` of a 150-page
-query answers 301 to page 1 and then serves it with HTTP 200 and 45 real
-products; and `www.rakuten.co.jp/category/{genreId}/?p=2` answers 200 with
+query answers 301 to page 1 (on 2026-10-29 the target was the same query
+with `?pref=tokyo` added, and its payload said `start: 0` with the same
+`numFound`) and then serves it with HTTP 200 and 45 real products; and `www.rakuten.co.jp/category/{genreId}/?p=2` answers 200 with
 page 1 **without even redirecting**. Both look like success from the client
 side, and a run that trusted its own request would re-collect page 1 for as
 long as it was asked to and report a complete, entirely duplicate file.
@@ -339,12 +369,22 @@ band, shop, tag — and run each slice.
 | `playwright_scraper.py` | **primary**, recommended |
 | `selenium_scraper.py` | parity |
 | `puppeteer_scraper.py` | parity (pyppeteer is effectively unmaintained) |
-| `scraper_api_client.py` | HTTP-only, measured at **$0.0005** a page |
+| `scraper_api_client.py` | HTTP-only, billed per page (the `x-debug` header of each response reports the price) |
 
 All three browser engines take the same flags, produce the same columns in
-the same order, and map the same exit codes. Verified rather than asserted:
-on one genre listing, two pages, the three engines produced **90 rows each
-with identical skus in identical order and every column identical**.
+the same order, and map the same exit codes. They are **not** guaranteed to
+return the same rows. On 2026-09-21 one genre listing, two pages, gave **90
+rows each with identical skus in identical order and every column
+identical** on all three. On 2026-10-29 one keyword listing with a price
+filter (`?min=1000&max=3000`), two pages, did not: Playwright and Selenium
+each returned 90 rows, 44 of the 45 skus on each page were common to both,
+and every column of the common rows matched — but one slot per page held a
+different product, the same one in each of two repeats, while Playwright
+against itself differed in nothing. Rakuten injects paid placements into the
+result list (see "Sponsored placements"), and the two clients were shown
+different ones; that is a likely reading and it is not established. pyppeteer
+was not repeated on 2026-10-29. Do not rely on two engines writing
+byte-identical files.
 
 Known limits, stated here rather than left to be discovered:
 
@@ -355,7 +395,12 @@ Known limits, stated here rather than left to be discovered:
   `--cdp-endpoint` is refused there with that explanation rather than
   silently dropping the credentials.
 * **Selenium's `--proxy-server` cannot authenticate at all.** Credentials are
-  stripped and a warning printed.
+  stripped and a warning printed. A proxy that wants them answers HTTP 407,
+  and Chromium does not raise for that: the page is blank. The engine reads
+  the navigation's own status (`responseStatus`, measured 2026-10-29 on Chrome
+  154: 407 for that proxy, 200 for a served page), reports a failed load
+  naming the 407, and rotates if the pool has another exit. It is not
+  reported as a block by the site, which is what it used to say.
 * **The pyppeteer engine deliberately sets no user agent**, where the other
   two set one. That is not a parity gap to close — it is required for that
   engine to work on this site. See the next section.
@@ -381,8 +426,8 @@ sufficient on its own: `selenium_scraper.py` issues the same
 `Network.setUserAgentOverride` and was served 3 of 3 pages.)
 
 The transferable part is the SHAPE. A fingerprint problem on this site looks
-like success on page 1. `--help` worked, `compileall` passed, 565 offline
-checks were green, and only a live two-page run found it. **If you add a user
+like success on page 1. `--help` worked, `compileall` passed, the offline
+suite was green, and only a live two-page run found it. **If you add a user
 agent or a fingerprint to any engine here, test it over two pages.**
 
 ## Do you need any of the paid products?
@@ -406,7 +451,7 @@ want it.
 | Scraping Browser API (`--cdp-endpoint`, US exit) | 90 rows over 2 pages, `complete` | no browser infrastructure, a chosen exit country, persistent cookies per profile |
 | Proxy (`--proxy`, EU residential exit) | 90 rows over 2 pages, `complete` | volume — spreading a long run so you stop meeting the 503 |
 | Fingerprint (`--fingerprint`) | applied and served; 90 rows over 2 pages | a consistent device identity |
-| Scraper API | HTTP 200, 1.09 MB, 45 products, **$0.0005** | no browser at all, one request a page |
+| Scraper API | HTTP 200, 1.09 MB, 45 products; priced per page (0.0005 in that 2026-09-21 run, 0.0003 reported by a 2026-10-29 audit run: it is the vendor's price, so read it from `x-debug` or the dashboard) | no browser at all, one request a page |
 | Captcha solving | nothing to solve — see below | — |
 
 Four notes, because each cost a measurement:
@@ -419,8 +464,11 @@ Four notes, because each cost a measurement:
   it did, so that throttle was request volume rather than the fingerprint.
   What Akamai refuses is a client that contradicts *itself*, which is why a
   bare user-agent override is refused and a complete identity is not.
-* **`--concurrency` is refused with `--cdp-endpoint`**, and so is `--proxy`,
-  and `--fingerprint` is ignored there. A Scraping Browser API profile allows
+* **`--concurrency` is refused with `--cdp-endpoint`**, and so is a `--proxy`
+  or `--proxy-file` typed on the command line (exit 2, with the reason). A
+  `RAKUTEN_PROXY` that only arrives through `.env` is ignored with a warning
+  instead, so one `.env` can serve both paths. `--fingerprint` is ignored
+  there. A Scraping Browser API profile allows
   one live connection, it already has an exit, and it already has an
   identity. Each refusal prints its reason rather than quietly doing
   nothing.
@@ -471,11 +519,23 @@ a block a throttle costs one wait.
 ### The proxy recipe that works in every engine
 
 ```bash
-# credentials in .env, never on a command line
-echo 'RAKUTEN_PROXY=http://USER:PASS@jp.proxy.2captcha.com:2334' >> .env
-python3 playwright_scraper.py --url "…" --pages 20 \
+# credentials in .env, never on a command line. Put the value ON the
+# RAKUTEN_PROXY line of the .env you copied from .env.example (a second line
+# further down works too: the last one is used, and a warning names the key).
+# Replace {user} and {password} with the dashboard's login and password.
+RAKUTEN_PROXY=http://{user}-zone-custom-region-jp:{password}@ap.proxy.2captcha.com:2334
+python3 playwright_scraper.py \
+  --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 20 \
   --proxy-rotate per-page --delay 4
 ```
+
+The host is a **gateway** (`ap`, `na` or `eu`), not a country: the country
+is the `-region-jp` segment of the login that the dashboard hands out.
+Checked 2026-10-29 with a credential-free `CONNECT` to port 2334: `ap`, `na`
+and `eu` answer `407 Proxy Authentication Required`, i.e. a real gateway;
+`jp`, `as` and `ae` resolve to the same Cloudflare addresses as the 2captcha
+website and the connection times out. An earlier version of this example
+used `jp.proxy.2captcha.com`, which cannot work.
 
 A rotation is a fresh browser: cookies issued against one exit and replayed
 from another are a stronger signal than either address alone, so the engine
@@ -492,8 +552,8 @@ a column is empty, it says whether that is the site or the parser.
 | Run | Result |
 |---|---|
 | keyword search, 3 pages | 135 rows, 100% priced, `complete`, exit 0 |
-| genre listing, 2 pages | 90 rows, identical across all three engines |
-| one item page | 1 row, 4 variants, a verified 50% was-price |
+| genre listing, 2 pages | 90 rows, identical across all three engines (a keyword listing on 2026-10-29 differed in one slot a page: see the engines section) |
+| one item page | 1 row, 4 variants, a verified 50% was-price. On 2026-10-29 the same item still had 4 variants and **no** was-price: its page said `referencePriceVerified: false`, the sale having ended, and the parser correctly emitted none |
 | 11 listing pages (405 rows) | `price` 405/405, `points` 405/405, `shop_code` 405/405 |
 
 **Field coverage across those 405 rows:**
@@ -562,6 +622,8 @@ More in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 ## Diffing two runs
 
 ```bash
+# the two files are the outputs of your own earlier runs, e.g. made with
+# `--out monday` and `--out tuesday`; both must be complete runs of one mode
 python3 diff_runs.py --old monday.json --new tuesday.json --fail-on-change
 ```
 
@@ -580,7 +642,8 @@ matter on this site:
 ## Testing
 
 ```bash
-python3 smoke_test.py      # 565 offline checks, no network, no engine needed
+python3 smoke_test.py      # the offline suite: no network, no engine needed
+pip install .[dev]         # pytest is only in this extra, not in requirements*.txt
 pytest                     # the same suite, as one test
 python3 .github/ci_checks.py --all
 ```

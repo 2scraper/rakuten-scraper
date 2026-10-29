@@ -128,8 +128,8 @@ from product_parser import (parse_products, parse_product_page,
                             site_host, is_supported_host, total_results,
                             total_pages, search_header, unsupported_reason,
                             shop_metadata, CURRENCY, served_by_rakuten)
-from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
-                           SOURCE_DEFAULT)
+from output_writer import (dedupe_by_key, ensure_output_dir, finish_run,
+                           EXIT_API_ERROR, SOURCE_DEFAULT)
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, to_playwright, mask,
@@ -171,6 +171,13 @@ class PageOutcome:
     products: List = field(default_factory=list)
     blocked_by: Optional[str] = None
     load_failed: bool = False
+    # The page stayed HTTP 503 / "access is concentrated" after every wait in
+    # the throttle budget. Its own flag rather than `blocked_by`, because no
+    # vendor blocked anything, and rather than `load_failed`, because the
+    # page loaded fine. Without it this outcome counted as a page that was
+    # READ and held no rows: the run said `complete`, exit 0, with page 1
+    # missing and every row's currency null (the currency is read off page 1).
+    throttled: bool = False
     # The page_flow state this page came back as ("content", "empty",
     # "shell", "throttled", "challenge", "blocked"). Carried so the caller
     # can tell an EMPTY page — a query that matched nothing — from a page
@@ -205,7 +212,8 @@ class PageOutcome:
 
     @property
     def ok(self) -> bool:
-        return not self.load_failed and self.blocked_by is None
+        return (not self.load_failed and not self.throttled
+                and self.blocked_by is None)
 
 
 ITEM_LINK_SELECTOR = page_flow.READY_SELECTOR_LISTING
@@ -822,6 +830,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     # of 4 tries once 6 seconds were put between requests.
     throttle_spent = 0
     html, state, load_failed = None, "ok", False
+    last_error = ""
 
     # The block loop may be re-entered for a throttle without consuming a
     # block attempt, so the budget is a while rather than a for.
@@ -846,6 +855,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 load_failed = False
                 break
             except (PWTimeout, PWError) as e:
+                last_error = page_flow.first_line(e)
                 # A dead or misconfigured proxy raises PWError
                 # (net::ERR_PROXY_CONNECTION_FAILED), not PWTimeout —
                 # catching only the latter lets it escape as a traceback,
@@ -859,11 +869,25 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 load_failed = True
                 if attempt < args.retries:
                     pause = args.retry_delay * (2 ** (attempt - 1))
-                    logger.warning("Timeout loading %s (attempt %d/%d) — "
+                    # What Chromium actually said, not the word "Timeout": an
+                    # exit that accepts CONNECT and then drops the TLS
+                    # handshake fails in milliseconds with
+                    # net::ERR_CONNECTION_CLOSED, and calling that a timeout
+                    # sent a reader looking for a slow site.
+                    logger.warning("Loading %s failed (attempt %d/%d: %s) — "
                                    "retrying in %.1fs.", url, attempt,
-                                   args.retries, pause)
+                                   args.retries, last_error, pause)
                     time.sleep(pause)
 
+        # Every retry on THIS exit is spent. With other exits in the pool the
+        # exit is the one thing left to change, so a failure that is not on
+        # the proxy-error list (a dropped TLS handshake, a hung gateway) is
+        # treated the same way: rotate, bounded by --proxy-block-retries.
+        # Before this, the run ended here with `partial` while three working
+        # exits sat unused in the pool.
+        if load_failed and not exit_failed:
+            exit_failed = "%d failed attempt(s), last: %s" % (args.retries,
+                                                              last_error)
         if exit_failed and has_pool and block_attempt < block_retries:
             logger.warning("Exit %s is unusable (%s) — rotating to another "
                            "one (%d/%d).", mask(pool.current), exit_failed,
@@ -1033,11 +1057,18 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 time.sleep(pause)
 
     if load_failed:
-        logger.error("Gave up loading %s after %d attempt(s).", url, args.retries)
+        logger.error("Gave up loading %s after %d attempt(s): %s", url,
+                     args.retries, last_error or "no error text")
         outcome.load_failed = True
         return outcome
 
     outcome.state = state
+
+    if state == "throttled":
+        # Only reachable once the throttle budget is spent (an earlier wait
+        # `continue`s above). A failed page, not a read one.
+        outcome.throttled = True
+        return outcome
 
     if state == "blocked":
         # What a caller needs to know here is that there is nothing to
@@ -1420,6 +1451,13 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
 
 
 def scrape(args) -> int:
+    # Before a single request: a missing `--out` directory used to surface
+    # only when the rows were written, after the whole run, as a traceback.
+    try:
+        ensure_output_dir(args.out, args.dump_html)
+    except OSError as exc:
+        logger.error("%s", exc)
+        return 2   # bad usage, like every other flag the parser refuses
     # One entry per page attempted, merged after the loop rather than folded
     # into shared state during it — see PageOutcome for why that ordering
     # matters more than it looks.
@@ -1485,104 +1523,124 @@ def scrape(args) -> int:
             outcomes.append(first)
 
             if not first.ok:
-                stop_reason = ("page_load_timeout" if first.load_failed
-                               else f"blocked_{first.blocked_by}")
+                stop_reason = page_flow.failure_stop_reason(
+                    load_failed=first.load_failed, throttled=first.throttled,
+                    blocked_by=first.blocked_by)
                 blocked = first.blocked_by is not None
-            seen_keys.update(p.sku for p in first.products if p.sku is not None)
-            planned = _plan_page_urls(session.page, args, first.final_url)
-
-            if args.pages > 1 and concurrency > 1 and planned is None:
-                logger.warning("--concurrency %d requested, but this "
-                               "listing's pagination cannot be addressed "
-                               "independently (see above) — falling back to "
-                               "one page at a time.", concurrency)
-                concurrency = 1
-
-            if args.pages > 1 and concurrency > 1:
-                # Close the page-1 browser before starting workers: it has
-                # done its job, and holding it open would cost one more
-                # browser than asked for.
-                session.close()
-                specs = [(n, planned[n - 2]) for n in range(2, args.pages + 1)]
-                logger.info("Fetching pages 2-%d across %d workers%s.",
-                            args.pages, concurrency,
-                            f" over {len(pool)} exit(s)" if pool else "")
-                rest, unattempted, exhausted = _fetch_pages_concurrently(
-                    args, pool, specs, concurrency)
-                outcomes.extend(rest)
-
-                failed = [o for o in rest if not o.ok]
-                if failed:
-                    worst = min(failed, key=lambda o: o.page_num)
-                    stop_reason = ("page_load_timeout" if worst.load_failed
-                                   else f"blocked_{worst.blocked_by}")
-                    blocked = any(o.blocked_by for o in rest)
-                elif exhausted:
-                    stop_reason = "no_new_products"
-                elif unattempted:
-                    # Should not happen without a failure or exhaustion,
-                    # but say so rather than reporting a complete run.
-                    stop_reason = "pages_unattempted"
-                session = None  # already closed
+                # Nothing below may run: it plans the next page's URL from
+                # the page that was just left, and a page that never loaded
+                # has no next link to read. Planning from it raised
+                # "Execution context was destroyed" out of a dead proxy's
+                # browser — a traceback and exit 1 in place of the exit 5
+                # the same run reports for a page that fails later — and,
+                # when pages 2..N did run, they were fetched into a sidecar
+                # that already said the run had stopped.
+                if args.pages > 1:
+                    logger.error(
+                        "Page 1 did not come back (%s), so pages 2-%d are not "
+                        "attempted: page 1's own result decides whether the "
+                        "rest can be addressed independently.",
+                        stop_reason, args.pages)
             else:
-                url = (planned[0] if planned else
-                       _next_url_from_page(session.page, args, 1))
-                for page_num in range(2, args.pages + 1):
-                    # A new exit per page is what actually spreads a run's
-                    # volume, and it costs a browser relaunch: carrying the
-                    # session across exits would defeat the point.
-                    if pool and pool.rotates_per_page():
-                        pool.advance(f"per-page rotation, page {page_num}")
-                        session.relaunch()
+                seen_keys.update(p.sku for p in first.products if p.sku is not None)
+                planned = _plan_page_urls(session.page, args, first.final_url)
 
-                    outcome = _fetch_one_page(session, args, pool, page_num, url)
-                    outcomes.append(outcome)
-                    if not outcome.ok:
-                        stop_reason = ("page_load_timeout" if outcome.load_failed
-                                       else f"blocked_{outcome.blocked_by}")
-                        blocked = outcome.blocked_by is not None
-                        break
+                if args.pages > 1 and concurrency > 1 and planned is None:
+                    logger.warning("--concurrency %d requested, but this "
+                                   "listing's pagination cannot be addressed "
+                                   "independently (see above) — falling back to "
+                                   "one page at a time.", concurrency)
+                    concurrency = 1
 
-                    # Whether this page contributed anything not already
-                    # seen. Kept as a running check because the condition is
-                    # inherently sequential — "new" only means anything
-                    # relative to the pages before it. The authoritative
-                    # dedupe happens once, after the loop, in page order.
-                    fresh_count = sum(1 for p in outcome.products
-                                      if p.sku is None or p.sku not in seen_keys)
-                    seen_keys.update(p.sku for p in outcome.products
-                                     if p.sku is not None)
+                if args.pages > 1 and concurrency > 1:
+                    # Close the page-1 browser before starting workers: it has
+                    # done its job, and holding it open would cost one more
+                    # browser than asked for.
+                    session.close()
+                    specs = [(n, planned[n - 2]) for n in range(2, args.pages + 1)]
+                    logger.info("Fetching pages 2-%d across %d workers%s.",
+                                args.pages, concurrency,
+                                f" over {len(pool)} exit(s)" if pool else "")
+                    rest, unattempted, exhausted = _fetch_pages_concurrently(
+                        args, pool, specs, concurrency)
+                    outcomes.extend(rest)
 
-                    # The site said it served a different page than the one
-                    # asked for. A distinct stop_reason from
-                    # `no_new_products`, because they mean different things
-                    # and a reader needs to tell them apart: this one is
-                    # "the listing ended and Rakuten answered with page 1
-                    # anyway", while `no_new_products` is "the catalogue
-                    # repeated itself". Checked BEFORE the dedupe-based
-                    # terminator, since a re-served page 1 would trip that
-                    # one too and report the vaguer reason.
-                    if not outcome.served_requested_page:
-                        stop_reason = "end_of_listing"
-                        break
-
-                    # A page past the first that contributes nothing new
-                    # means the end of the results — or that pagination is
-                    # looping back on itself. Either way there is nothing
-                    # further to fetch, and this is the honest terminating
-                    # condition: a property of the DATA, not of a CSS
-                    # selector that may have been renamed.
-                    if not fresh_count:
-                        logger.info("Page %d added no rows not already seen "
-                                    "— treating that as the end of the "
-                                    "listing.", page_num)
+                    failed = [o for o in rest if not o.ok]
+                    if failed:
+                        worst = min(failed, key=lambda o: o.page_num)
+                        stop_reason = page_flow.failure_stop_reason(
+                            load_failed=worst.load_failed,
+                            throttled=worst.throttled,
+                            blocked_by=worst.blocked_by)
+                        blocked = any(o.blocked_by for o in rest)
+                    elif exhausted:
                         stop_reason = "no_new_products"
-                        break
+                    elif unattempted:
+                        # Should not happen without a failure or exhaustion,
+                        # but say so rather than reporting a complete run.
+                        stop_reason = "pages_unattempted"
+                    session = None  # already closed
+                else:
+                    url = (planned[0] if planned else
+                           _next_url_from_page(session.page, args, 1))
+                    for page_num in range(2, args.pages + 1):
+                        # A new exit per page is what actually spreads a run's
+                        # volume, and it costs a browser relaunch: carrying the
+                        # session across exits would defeat the point.
+                        if pool and pool.rotates_per_page():
+                            pool.advance(f"per-page rotation, page {page_num}")
+                            session.relaunch()
 
-                    if page_num < args.pages:
-                        url = (planned[page_num - 1] if planned else
-                               _next_url_from_page(session.page, args, page_num))
-                        time.sleep(args.delay)
+                        outcome = _fetch_one_page(session, args, pool, page_num, url)
+                        outcomes.append(outcome)
+                        if not outcome.ok:
+                            stop_reason = page_flow.failure_stop_reason(
+                                load_failed=outcome.load_failed,
+                                throttled=outcome.throttled,
+                                blocked_by=outcome.blocked_by)
+                            blocked = outcome.blocked_by is not None
+                            break
+
+                        # Whether this page contributed anything not already
+                        # seen. Kept as a running check because the condition is
+                        # inherently sequential — "new" only means anything
+                        # relative to the pages before it. The authoritative
+                        # dedupe happens once, after the loop, in page order.
+                        fresh_count = sum(1 for p in outcome.products
+                                          if p.sku is None or p.sku not in seen_keys)
+                        seen_keys.update(p.sku for p in outcome.products
+                                         if p.sku is not None)
+
+                        # The site said it served a different page than the one
+                        # asked for. A distinct stop_reason from
+                        # `no_new_products`, because they mean different things
+                        # and a reader needs to tell them apart: this one is
+                        # "the listing ended and Rakuten answered with page 1
+                        # anyway", while `no_new_products` is "the catalogue
+                        # repeated itself". Checked BEFORE the dedupe-based
+                        # terminator, since a re-served page 1 would trip that
+                        # one too and report the vaguer reason.
+                        if not outcome.served_requested_page:
+                            stop_reason = "end_of_listing"
+                            break
+
+                        # A page past the first that contributes nothing new
+                        # means the end of the results — or that pagination is
+                        # looping back on itself. Either way there is nothing
+                        # further to fetch, and this is the honest terminating
+                        # condition: a property of the DATA, not of a CSS
+                        # selector that may have been renamed.
+                        if not fresh_count:
+                            logger.info("Page %d added no rows not already seen "
+                                        "— treating that as the end of the "
+                                        "listing.", page_num)
+                            stop_reason = "no_new_products"
+                            break
+
+                        if page_num < args.pages:
+                            url = (planned[page_num - 1] if planned else
+                                   _next_url_from_page(session.page, args, page_num))
+                            time.sleep(args.delay)
         finally:
             if session is not None:
                 session.close()
@@ -1922,6 +1980,11 @@ def parse_args():
     # Fill --twocaptcha-key / --cdp-endpoint / --proxy / --url from the
     # environment or .env when the flag was not given. An explicit flag wins.
     env_config.apply(args)
+    conflicts = page_flow.cdp_conflicts(
+        args, env_config.given_on_command_line("proxy", "proxy_file",
+                                               "concurrency"))
+    if conflicts:
+        p.error(" ".join(conflicts))
     if not args.url:
         p.error("no --url given, and RAKUTEN_URL is not set in the "
                 "environment or in .env.")

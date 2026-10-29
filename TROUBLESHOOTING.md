@@ -85,6 +85,13 @@ Raise `--delay` (the default is 2.0; 4–6 seconds is comfortable) or lower
 development; the same URL came back 200 with a full payload on 4 of 4 tries
 once 6 seconds were put between requests.
 
+If the page is STILL throttled after the third wait, the run does not carry
+on as though that page had been read: the page is recorded as failed
+(`stop_reason: throttled`, listed in `pages_failed`), the run ends `partial`
+(exit 6) when other pages produced rows, and exit 5 when none did. Page 1 is
+the one that matters most, because the currency is read off it. Re-run with
+a larger `--delay`.
+
 Note that the 403 refusal and this 503 throttle render the **identical
 body**. Only the status separates them — which is why `selenium_scraper.py`,
 which cannot give you a status, reads a statusless branded page as the
@@ -245,15 +252,26 @@ client hints that go with it.
 
 ## Which engine should I use?
 
-`playwright_scraper.py`. The other two are parity engines — they must produce
-the same rows, and they are verified to (all three agreed on 90 rows across
-2 pages, every column identical) — but Playwright is the one that is
-maintained upstream and the one with no driver-specific limitation.
+`playwright_scraper.py`. The other two are parity engines: same flags, same
+columns, same exit codes. They are not guaranteed to return the same rows — on
+2026-09-21 all three agreed on 90 rows across 2 pages, every column identical,
+but on 2026-10-29 a different query gave Playwright and Selenium 44 of 45 skus
+in common on each page with one slot differing (README, "Engines"). Playwright
+is also the one that is maintained upstream and the one with no
+driver-specific limitation.
 
 Selenium cannot use an authenticated remote CDP endpoint (`debuggerAddress`
 takes a bare `host:port` with nowhere to put a password) and its
-`--proxy-server` cannot authenticate at all. pyppeteer is effectively
-unmaintained and its own README points at Playwright.
+`--proxy-server` cannot authenticate at all (a proxy that wants a login
+answers 407, which the engine reports as a failed load naming the 407, not as
+a block by the site). pyppeteer is effectively unmaintained and its own README
+points at Playwright; if its bundled Chromium will not start
+(`Browser closed unexpectedly`, seen on Apple Silicon) pass `--chromium-path`
+with a Chrome or Chromium you installed.
+
+`--concurrency N` and a typed `--proxy` / `--proxy-file` are refused with
+`--cdp-endpoint` (exit 2): the remote browser already has one live
+connection per profile and its own exit.
 
 ## Something else
 

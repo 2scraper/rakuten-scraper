@@ -64,7 +64,7 @@ import requests
 
 from product_parser import (parse_products, detect_bot_challenge,
                             detect_page_state, BOT_CHALLENGE_MARKERS)
-from output_writer import save
+from output_writer import ensure_output_dir, save
 import env_config
 import page_flow
 
@@ -226,6 +226,14 @@ def main() -> int:
 
     if not args.key:
         logger.error("No 2captcha API key. Pass --key, or better, export TWOCAPTCHA_KEY.")
+        return 2
+
+    # Before the first PAID request: a missing `--out` directory used to
+    # surface only when the result was written, after the page was billed.
+    try:
+        ensure_output_dir(args.out)
+    except OSError as exc:
+        logger.error("%s", exc)
         return 2
 
     # A challenge page is not necessarily final (see _run_once), so a

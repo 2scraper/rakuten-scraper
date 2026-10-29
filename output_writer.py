@@ -307,6 +307,30 @@ LIST_CSV_SEPARATOR = " | "
 
 
 
+def ensure_output_dir(*paths: Optional[str]) -> None:
+    """Create the directory part of each output path before anything is fetched.
+
+    `--out live/genre` with no `live/` used to fail only at the END of the
+    run, inside the atomic writer, after every page had been fetched and
+    parsed: the rows were thrown away with a traceback and exit 1. Doing it
+    first costs nothing, and a directory that cannot be made (a file in the
+    way, no permission) is then reported before a single request is spent.
+
+    Raises OSError naming the directory.
+    """
+    for path in paths:
+        if not path:
+            continue
+        directory = os.path.dirname(os.path.abspath(path))
+        if os.path.isdir(directory):
+            continue
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError as exc:
+            raise OSError(f"cannot create the output directory {directory!r}: "
+                          f"{exc.strerror or exc}") from exc
+
+
 @contextlib.contextmanager
 def _atomic(path: str, newline: Optional[str] = None):
     """Write to a temporary file beside `path`, then rename over it.

@@ -68,8 +68,8 @@ from product_parser import (parse_products, parse_product_page,
                             site_host, is_supported_host, total_results,
                             total_pages, search_header, unsupported_reason,
                             shop_metadata, CURRENCY, served_by_rakuten)
-from output_writer import (dedupe_by_key, finish_run, EXIT_API_ERROR,
-                           SOURCE_DEFAULT)
+from output_writer import (dedupe_by_key, ensure_output_dir, finish_run,
+                           EXIT_API_ERROR, SOURCE_DEFAULT)
 import page_flow
 from page_flow import MIN_CARD_MATCHES
 from proxy_pool import (from_args as proxy_pool_from_args, mask, ROTATE_MODES,
@@ -140,9 +140,17 @@ class PageOutcome:
     # cache.
     shop_facts: Optional[dict] = None
 
+    # The page stayed a branded refusal-or-throttle after every wait in the
+    # throttle budget. WebDriver exposes no status, so this engine cannot say
+    # which of the two it was (see the `throttled` branch). Its own flag: the
+    # page loaded and no vendor was named, and without it the page counted as
+    # READ with no rows — `complete`, exit 0, page 1 missing.
+    throttled: bool = False
+
     @property
     def ok(self) -> bool:
-        return not self.load_failed and self.blocked_by is None
+        return (not self.load_failed and not self.throttled
+                and self.blocked_by is None)
 
 
 # Every `scheme://user:pass@` in a string, however many times it occurs.
@@ -494,6 +502,28 @@ def handle_captcha_if_present(session, args, purchases=None) -> bool:
     return True
 
 
+def _navigation_refusal(driver) -> str:
+    """Why the navigation that just finished never reached the site, or "".
+
+    Reads the main-resource status off the page's own navigation timing. Empty
+    when the status is unavailable (an older Chrome) or the page was served.
+    """
+    try:
+        status, size = driver.execute_script(
+            "var n = performance.getEntriesByType('navigation')[0];"
+            "return [n ? n.responseStatus : null,"
+            " document.documentElement.outerHTML.length];")
+    except Exception:  # noqa: BLE001 — a probe must never end a run
+        return ""
+    if status == 407:
+        return ("the proxy answered HTTP 407 (Proxy Authentication Required) "
+                "instead of passing the request on.")
+    if status == 0 and (size or 0) < 100:
+        return ("no HTTP response was received for the navigation (the "
+                "connection was refused or dropped).")
+    return ""
+
+
 def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome:
     """Fetch and parse one page. Mirrors playwright_scraper._fetch_one_page.
 
@@ -504,6 +534,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     outcome = PageOutcome(page_num=page_num, url=url)
     d = _driver(session)
     html, state, load_failed = None, "ok", False
+    last_error = ""
 
     # See the Playwright engine for the measurement: without a pool there is
     # no exit to rotate to, but a plain re-fetch is what clears a block on a
@@ -536,10 +567,34 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         for attempt in range(1, args.retries + 1):
             try:
                 session.driver.get(url)
+                # Chromium does not always RAISE for a navigation it could
+                # not make: a proxy that answers CONNECT with 407 leaves
+                # `get()` returning normally and a 39-byte blank document,
+                # which the classifier called a block. A Selenium run through
+                # a proxy that wanted a login therefore reported "blocked ...
+                # Akamai refuses this site" and exit 3 for a request that
+                # never left the proxy. The navigation's own status is the
+                # tell, and the page can state it: measured 2026-10-29 on
+                # Chrome 154, `responseStatus` of the navigation entry was
+                # 407 for that proxy and 200 for a served page. (The page's
+                # URL is NOT the tell: it stays the target's.)
+                #
+                # Only the proxy refusal and "no response at all" are read
+                # from it. Feeding 403/503 into the classifier would let this
+                # engine tell a refusal from a throttle, but that is a policy
+                # change of its own and is not made here.
+                refusal = _navigation_refusal(session.driver)
+                if refusal:
+                    hint = ""
+                    if pool is not None and split_credentials(pool.current)[1]:
+                        hint = (" This exit has credentials, which Selenium "
+                                "cannot send, so the refusal is expected.")
+                    raise WebDriverException(refusal + hint)
                 load_failed = False
                 break
             except (TimeoutException, WebDriverException) as e:
                 text = str(e)
+                last_error = page_flow.first_line(e)
                 reason = next((m for m in _PROXY_ERROR_MARKERS if m in text), "")
                 load_failed = True
                 if reason:
@@ -549,9 +604,17 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                     pause = args.retry_delay * (2 ** (attempt - 1))
                     logger.warning("Failed to load %s (attempt %d/%d: %s) — "
                                    "retrying in %.1fs.", url, attempt,
-                                   args.retries, text[:120], pause)
+                                   args.retries, last_error, pause)
                     time.sleep(pause)
 
+        # Every retry on THIS exit is spent. With other exits in the pool the
+        # exit is the one thing left to change, so a failure that is not on
+        # the proxy-error list (a dropped TLS handshake, a hung gateway) is
+        # treated like one, bounded by --proxy-block-retries. The run used to
+        # end here as `partial` with working exits unused.
+        if load_failed and not exit_failed:
+            exit_failed = "%d failed attempt(s), last: %s" % (args.retries,
+                                                              last_error)
         if exit_failed and has_pool and block_attempt < block_retries:
             logger.warning("Exit %s is unusable (%s) — rotating to another "
                            "one (%d/%d).", mask(pool.current), exit_failed,
@@ -671,7 +734,10 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 "Page %d is still throttled after %d wait(s). Rakuten is "
                 "rate-limiting this client rather than refusing it, so the "
                 "fix is fewer requests (raise --delay, lower --concurrency) "
-                "rather than another exit.", page_num, throttle_spent)
+                "rather than another exit. This engine cannot read the HTTP "
+                "status, so a refusal (403) would look the same here; "
+                "playwright_scraper.py tells them apart.", page_num,
+                throttle_spent)
             break
 
         # Blocked or challenged. The ADDRESS is what was scored, not the URL,
@@ -702,11 +768,18 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
                 time.sleep(pause)
 
     if load_failed:
-        logger.error("Gave up loading %s after %d attempt(s).", url, args.retries)
+        logger.error("Gave up loading %s after %d attempt(s): %s", url,
+                     args.retries, last_error or "no error text")
         outcome.load_failed = True
         return outcome
 
     outcome.state = state
+
+    if state == "throttled":
+        # Only reachable once the throttle budget is spent (an earlier wait
+        # `continue`s above). A failed page, not a read one.
+        outcome.throttled = True
+        return outcome
 
     if state == "blocked":
         # There is no challenge on this site to solve. Akamai's refusals here
@@ -917,6 +990,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
 
 
 def scrape(args) -> int:
+    # Before a single request: a missing `--out` directory used to surface
+    # only when the rows were written, after the whole run, as a traceback.
+    try:
+        ensure_output_dir(args.out, args.dump_html)
+    except OSError as exc:
+        logger.error("%s", exc)
+        return 2   # bad usage, like every other flag the parser refuses
     outcomes: List[PageOutcome] = []
     seen_keys = set()
     blocked = False
@@ -947,8 +1027,9 @@ def scrape(args) -> int:
         outcomes.append(first)
 
         if not first.ok:
-            stop_reason = ("page_load_timeout" if first.load_failed
-                           else f"blocked_{first.blocked_by}")
+            stop_reason = page_flow.failure_stop_reason(
+                load_failed=first.load_failed, throttled=first.throttled,
+                blocked_by=first.blocked_by)
             blocked = first.blocked_by is not None
         elif args.mode == "listing":
             seen_keys.update(p.sku for p in first.products if p.sku is not None)
@@ -987,8 +1068,10 @@ def scrape(args) -> int:
                 outcome = _fetch_one_page(session, args, pool, page_num, url)
                 outcomes.append(outcome)
                 if not outcome.ok:
-                    stop_reason = ("page_load_timeout" if outcome.load_failed
-                                   else f"blocked_{outcome.blocked_by}")
+                    stop_reason = page_flow.failure_stop_reason(
+                        load_failed=outcome.load_failed,
+                        throttled=outcome.throttled,
+                        blocked_by=outcome.blocked_by)
                     blocked = outcome.blocked_by is not None
                     break
 
@@ -1273,6 +1356,11 @@ def parse_args():
                         "--cdp-endpoint, where the remote browser decides.")
     args = p.parse_args()
     env_config.apply(args)
+    conflicts = page_flow.cdp_conflicts(
+        args, env_config.given_on_command_line("proxy", "proxy_file",
+                                               "concurrency"))
+    if conflicts:
+        p.error(" ".join(conflicts))
     if not args.url:
         p.error("no --url given, and RAKUTEN_URL is not set in the environment "
                 "or in .env.")

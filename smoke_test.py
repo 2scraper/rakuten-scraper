@@ -4291,6 +4291,603 @@ def test_retries_is_validated_in_every_entry_point():
     return check("--retries is validated in every entry point, so 0 is a usage error", not problems)
 
 
+# --- Failure semantics: what a page that did NOT come back usable means -----
+#
+# One group for the defects a live verification of v0.3.0 found, each pinned
+# at the entry point that failed rather than at a helper underneath it.
+
+def _failure_engines(skips):
+    """Every engine this environment can import, each as its module."""
+    engines = []
+    for name in ("playwright_scraper", "puppeteer_scraper"):
+        try:
+            engines.append(_load_engine_with_stub_driver(name))
+        except Exception as e:  # noqa: BLE001
+            skips.append("%s (%s)" % (name, e))
+    try:
+        import selenium_scraper
+        engines.append(selenium_scraper)
+    except ImportError as e:
+        skips.append("selenium_scraper (%s)" % e)
+    return engines
+
+
+def _parse_engine_args(engine, argv):
+    """(args, None) from the engine's OWN parser, or (None, exit_code)."""
+    import io as _io
+    saved = sys.argv
+    sys.argv = [engine.__name__] + list(argv)
+    try:
+        with redirect_stderr(_io.StringIO()):
+            return engine.parse_args(), None
+    except SystemExit as e:
+        return None, e.code
+    finally:
+        sys.argv = saved
+
+
+def test_failure_semantics(skips):
+    group("a page that did not come back usable: throttle, dead exit, page 1, "
+          "output directory, --cdp-endpoint")
+    ok = True
+    import argparse as _ap
+    import types
+    import time as _time
+    import page_flow as _pf
+    from unittest import mock
+
+    engines = _failure_engines(skips)
+    no_sleep = types.SimpleNamespace(sleep=lambda s: None, time=_time.time,
+                                     monotonic=_time.monotonic)
+    search_url = "https://search.rakuten.co.jp/search/mall/%E3%82%B3%E3%83%BC%E3%83%92%E3%83%BC/"
+
+    # 1. A page that stayed throttled after every wait is a FAILED page. It
+    #    used to be `ok` with no rows, which a run reported as `complete`.
+    ok &= check("failure_stop_reason names a throttle as its own reason",
+                _pf.failure_stop_reason(load_failed=False, throttled=True,
+                                        blocked_by=None) == "throttled"
+                and _pf.failure_stop_reason(load_failed=True, throttled=True,
+                                            blocked_by=None)
+                == "page_load_timeout"
+                and _pf.failure_stop_reason(load_failed=False, throttled=False,
+                                            blocked_by="akamai")
+                == "blocked_akamai")
+    for engine in engines:
+        name = engine.__name__
+        oc = engine.PageOutcome(page_num=1, url="u", throttled=True)
+        ok &= check("%s: a throttled outcome is not ok, a plain one is"
+                    % name,
+                    not oc.ok and engine.PageOutcome(page_num=1, url="u").ok)
+    # The public finish path: a throttled page 1 with rows from page 2 is a
+    # PARTIAL run, and with no rows at all it is exit 5, never 0 or 4.
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "o")
+        row = Product(sku="s:1", url="https://item.rakuten.co.jp/s/1/",
+                      title="t", price=100.0)
+        rc = finish_run([row], out, "json", False, blocked=False,
+                        stop_reason="throttled", pages_requested=3,
+                        pages_completed=2, pages_failed=[1],
+                        start_url="u", final_url="u")
+        meta = json.load(open(out + ".meta.json"))
+        ok &= check("rows plus a failed page 1 finish as partial, exit 6",
+                    rc == 6 and meta["status"] == "partial"
+                    and meta["stop_reason"] == "throttled"
+                    and meta["pages_failed"] == [1])
+        rc = finish_run([], os.path.join(d, "none"), "json", False,
+                        blocked=False, stop_reason="throttled",
+                        pages_requested=1, pages_completed=0,
+                        pages_failed=[1], start_url="u", final_url="u")
+        ok &= check("no rows and a throttled page is exit 5, not 0 or 4",
+                    rc == 5)
+
+    # Driven through the fake page the existing fetch-loop group uses.
+    blk_html, blk_url, _ = fx("block_403")
+    empty_html, _, _ = fx("search_no_results")
+    for engine in engines:
+        name = engine.__name__
+        if name == "selenium_scraper":
+            continue          # drives a WebDriver, not this fake page
+        real_time, engine.time = engine.time, no_sleep
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                args = _ap.Namespace(
+                    pages=1, retries=2, retry_delay=0.0, mode="listing",
+                    out=os.path.join(d, "out"), dump_html=None,
+                    proxy_block_retries=2, solve_captcha="when-blocked",
+                    twocaptcha_key="", captcha_api="v2", min_score=0.7)
+                page = _LoopFakePage(blk_url, blk_html, status=503)
+                out = engine._fetch_one_page(_LoopFakeSession(page), args,
+                                             None, 1, blk_url)
+                ok &= check("%s: a page still 503 after every wait is "
+                            "throttled, not ok, and not read (state=%s, "
+                            "ok=%s)" % (name, out.state, out.ok),
+                            out.throttled and not out.ok
+                            and out.state == "throttled"
+                            and not out.load_failed
+                            and out.blocked_by is None)
+
+                # 2. Every retry on one exit is spent and the pool holds
+                #    another: change exits instead of ending the run.
+                conn_err = getattr(engine, "PWError", Exception)
+
+                class _RotSession(_LoopFakeSession):
+                    healthy_after = 1
+
+                    def relaunch(self):
+                        super().relaunch()
+                        if self.relaunches >= self.healthy_after:
+                            self.page._goto_error = None
+
+                def attempt(pool, healthy_after):
+                    page = _LoopFakePage(
+                        search_url, empty_html, status=200,
+                        goto_error=conn_err("Page.goto: net::ERR_CONNECTION_"
+                                            "CLOSED at " + search_url))
+                    sess = _RotSession(page)
+                    sess.healthy_after = healthy_after
+                    return engine._fetch_one_page(sess, args, pool, 1,
+                                                  search_url), sess, page
+
+                pool = ProxyPool(["http://127.0.0.1:1", "http://127.0.0.1:2"])
+                out, sess, page = attempt(pool, 1)
+                ok &= check("%s: a dropped connection on one exit moves to "
+                            "the next exit and the page is read "
+                            "(relaunches=%d, state=%s)"
+                            % (name, sess.relaunches, out.state),
+                            not out.load_failed and sess.relaunches == 1
+                            and out.state == "empty"
+                            and pool.current.endswith(":2"))
+                pool = ProxyPool(["http://127.0.0.1:1", "http://127.0.0.1:2"])
+                out, sess, page = attempt(pool, 99)
+                ok &= check("%s: every exit dead ends in a load failure "
+                            "after --proxy-block-retries rotations, not "
+                            "forever (relaunches=%d)"
+                            % (name, sess.relaunches),
+                            out.load_failed and not out.ok
+                            and sess.relaunches == args.proxy_block_retries)
+                out, sess, page = attempt(None, 99)
+                ok &= check("%s: with no pool nothing is rotated "
+                            "(relaunches=%d)" % (name, sess.relaunches),
+                            out.load_failed and sess.relaunches == 0)
+                pool = ProxyPool(["http://127.0.0.1:1"])
+                out, sess, page = attempt(pool, 1)
+                ok &= check("%s: a pool of ONE exit has nowhere to rotate "
+                            "(relaunches=%d)" % (name, sess.relaunches),
+                            out.load_failed and sess.relaunches == 0)
+        finally:
+            engine.time = real_time
+
+    # The log line says what Chromium said, never the word "Timeout" for an
+    # error that is not one.
+    ok &= check("first_line keeps the error name and drops the repeated URL",
+                _pf.first_line(Exception("Page.goto: net::ERR_CONNECTION_"
+                                         "CLOSED at https://x/y\nCall log:"))
+                == "Page.goto: net::ERR_CONNECTION_CLOSED")
+    for eng in ("playwright_scraper", "puppeteer_scraper"):
+        text = open(os.path.join(REPO_ROOT, eng + ".py"), encoding="utf-8").read()
+        ok &= check("%s no longer calls every load error a 'Timeout'" % eng,
+                    "Timeout loading" not in text)
+
+    # 2b. Selenium: Chromium does not raise for a proxy that answers 407, it
+    #     leaves a blank page, and that was reported as a BLOCK by the site.
+    #     The navigation's own status is what says otherwise.
+    for engine in engines:
+        if engine.__name__ != "selenium_scraper":
+            continue
+
+        class _FakeDriver:
+            def __init__(self, status, size=39):
+                self.status, self.size = status, size
+                self.page_source = "<html><head></head><body></body></html>"
+                self.current_url = search_url
+                self.gets = 0
+
+            def get(self, url):
+                self.gets += 1
+
+            def execute_script(self, script, *a):
+                if self.status == "boom":
+                    raise RuntimeError("no script engine")
+                if "getEntriesByType" not in script:
+                    return None       # every other probe: nothing to report
+                return [self.status, self.size]
+
+            def find_elements(self, *a):
+                return []
+
+            def save_screenshot(self, path):
+                return True
+
+        refusal = engine._navigation_refusal
+        ok &= check("selenium: a navigation status of 407 is the proxy "
+                    "refusing, not the site",
+                    "407" in refusal(_FakeDriver(407)))
+        ok &= check("selenium: status 0 on a blank page is 'no response'",
+                    "no HTTP response" in refusal(_FakeDriver(0)))
+        ok &= check("selenium: a served page, an unavailable status and a "
+                    "probe that raises all read as no refusal",
+                    refusal(_FakeDriver(200, 900000)) == ""
+                    and refusal(_FakeDriver(None)) == ""
+                    and refusal(_FakeDriver("boom")) == ""
+                    and refusal(_FakeDriver(0, 800000)) == "")
+        real_time, engine.time = engine.time, no_sleep
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                args = _ap.Namespace(
+                    pages=1, retries=2, retry_delay=0.0, mode="listing",
+                    out=os.path.join(d, "out"), dump_html=None,
+                    proxy_block_retries=2, solve_captcha="when-blocked",
+                    twocaptcha_key="", captcha_api="v2", min_score=0.7)
+
+                class _SelSession:
+                    def __init__(self, drv):
+                        self.driver, self.relaunches = drv, 0
+
+                    def relaunch(self):
+                        self.relaunches += 1
+                        self.driver.status = 200   # the next exit works
+                        self.driver.size = 900000
+                        self.driver.page_source = empty_html
+                pool = ProxyPool(["http://user:pass@127.0.0.1:1",
+                                  "http://user:pass@127.0.0.1:2"])
+                sess = _SelSession(_FakeDriver(407))
+                # What the test must NOT see is the old verdict: "blocked".
+                out = engine._fetch_one_page(sess, args, pool, 1, search_url)
+                ok &= check("selenium: a 407 is a failed LOAD with another "
+                            "exit to try, never blocked (relaunches=%d, "
+                            "blocked_by=%r, load_failed=%s)"
+                            % (sess.relaunches, out.blocked_by, out.load_failed),
+                            out.blocked_by is None and not out.load_failed
+                            and sess.relaunches == 1 and out.state == "empty")
+                sess = _SelSession(_FakeDriver(407))
+                out = engine._fetch_one_page(sess, args, None, 1, search_url)
+                ok &= check("selenium: with no other exit a 407 ends as a "
+                            "load failure (exit 5 material), not blocked",
+                            out.load_failed and out.blocked_by is None
+                            and not out.ok)
+        finally:
+            engine.time = real_time
+
+    # 2c. pyppeteer's own browser would not start: reported, exit 5.
+    for engine in engines:
+        if engine.__name__ != "puppeteer_scraper":
+            continue
+        ok &= check("puppeteer: BrowserStartError is a RuntimeError",
+                    issubclass(engine.BrowserStartError, RuntimeError))
+        for chromium_path, needle in ((None, "--chromium-path"),
+                                      ("/nowhere/chrome", "/nowhere/chrome")):
+            class _Boom(Exception):
+                pass
+            args = _ap.Namespace(cdp_endpoint=None, chromium_path=chromium_path,
+                                 headless=True, fingerprint=False,
+                                 locale="ja-JP", twocaptcha_key="",
+                                 fp_country=None, fp_tags="Windows")
+
+            class _Bridge:
+                def run(self, value, timeout=None):
+                    return value
+            saved = engine.launch
+            engine.launch = lambda **k: (_ for _ in ()).throw(
+                _Boom("Browser closed unexpectedly:"))
+            try:
+                try:
+                    engine._Session(_Bridge(), args, None).open()
+                    raised = None
+                except Exception as e:  # noqa: BLE001
+                    raised = e
+            finally:
+                engine.launch = saved
+            ok &= check("puppeteer: a browser that will not start raises "
+                        "BrowserStartError naming %r (%s)"
+                        % (needle, type(raised).__name__),
+                        isinstance(raised, engine.BrowserStartError)
+                        and needle in str(raised))
+        tree = ast.parse(open(os.path.join(REPO_ROOT, "puppeteer_scraper.py"),
+                              encoding="utf-8").read())
+        mapped = False
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.ExceptHandler)
+                    and isinstance(node.type, ast.Name)
+                    and node.type.id == "BrowserStartError"):
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call)
+                            and isinstance(sub.func, ast.Attribute)
+                            and sub.func.attr == "exit" and sub.args
+                            and isinstance(sub.args[0], ast.Name)
+                            and sub.args[0].id == "EXIT_API_ERROR"):
+                        mapped = True
+        ok &= check("puppeteer: the entry point turns BrowserStartError "
+                    "into exit 5, not a traceback", mapped)
+
+    # 1b. A throttled page is not the end of the listing. The worker loop
+    #     stops dispatch when a page is `ok` and empty, and a throttled page
+    #     used to be exactly that.
+    for engine in engines:
+        if engine.__name__ != "playwright_scraper":
+            continue
+        original = (engine.sync_playwright, engine._BrowserSession,
+                    engine._fetch_one_page)
+        fetched, lock = [], threading.Lock()
+
+        def throttled_fetch(session, a, pool, page_num, url):
+            with lock:
+                fetched.append(page_num)
+            oc = engine.PageOutcome(page_num=page_num, url=url)
+            oc.throttled = True
+            return oc
+
+        class _Args:
+            delay = 0
+            mode = "listing"
+            out = "x"
+        engine.sync_playwright = lambda: _FakePlaywright()
+        engine._BrowserSession = lambda pw, a, pool, **kw: _FakeSession(pool)
+        engine._fetch_one_page = throttled_fetch
+        try:
+            results, unattempted, exhausted = engine._fetch_pages_concurrently(
+                _Args(), None, [(n, "u%d" % n) for n in range(2, 8)], 3)
+        finally:
+            (engine.sync_playwright, engine._BrowserSession,
+             engine._fetch_one_page) = original
+        ok &= check("playwright_scraper: throttled pages do not read as the "
+                    "end of the listing, and are reported failed "
+                    "(fetched=%d, exhausted=%s, failed=%d)"
+                    % (len(fetched), exhausted,
+                       sum(1 for o in results if not o.ok)),
+                    sorted(fetched) == list(range(2, 8)) and not exhausted
+                    and all(not o.ok for o in results))
+
+    # 4b. The Scraper API client pays per request, so it creates the output
+    #     directory (or refuses) BEFORE the first one.
+    import scraper_api_client as sac
+    with tempfile.TemporaryDirectory() as d:
+        blocker = os.path.join(d, "afile")
+        open(blocker, "w").close()
+        calls = []
+
+        def _paid(*a, **k):
+            calls.append(1)
+            raise ConnectionError("a paid request was attempted")
+        saved_argv = sys.argv
+        sys.argv = ["scraper_api_client.py", "--url", search_url, "--key",
+                    "stub-not-sent", "--out",
+                    os.path.join(blocker, "sub", "run")]
+        try:
+            with mock.patch.object(sac.requests, "post", side_effect=_paid), \
+                    mock.patch.object(sac.requests, "get", side_effect=_paid), \
+                    redirect_stderr(io.StringIO()):
+                try:
+                    rc = sac.main()
+                except Exception as e:  # noqa: BLE001
+                    rc = "raised %s" % type(e).__name__
+        finally:
+            sys.argv = saved_argv
+        ok &= check("scraper_api_client: an --out directory that cannot be "
+                    "created is exit 2 before any paid request (rc=%r, "
+                    "requests=%d)" % (rc, len(calls)), rc == 2 and not calls)
+
+    # 3. Page 1 failed: nothing after it may run, and no page is planned from
+    #    a page that never loaded. Driven through scrape() itself.
+    for engine in engines:
+        if engine.__name__ != "playwright_scraper":
+            continue          # the other two skip the block by structure
+        with tempfile.TemporaryDirectory() as d:
+            args, code = _parse_engine_args(
+                engine, ["--url", search_url, "--pages", "3", "--out",
+                         os.path.join(d, "o")])
+            fetched, planned = [], []
+
+            def fake_fetch(session, a, pool, page_num, url):
+                fetched.append(page_num)
+                oc = engine.PageOutcome(page_num=page_num, url=url)
+                oc.load_failed = True
+                return oc
+
+            def boom(*a, **k):
+                planned.append(1)
+                raise RuntimeError("planned from a page that never loaded")
+            original = (engine.sync_playwright, engine._BrowserSession,
+                        engine._fetch_one_page, engine._plan_page_urls,
+                        engine._next_url_from_page)
+            engine.sync_playwright = lambda: _FakePlaywright()
+            engine._BrowserSession = lambda pw, a, pool, **kw: _FakeSession(pool)
+            engine._fetch_one_page = fake_fetch
+            engine._plan_page_urls = boom
+            engine._next_url_from_page = boom
+            try:
+                with redirect_stdout(io.StringIO()):
+                    try:
+                        rc, raised = engine.scrape(args), None
+                    except Exception as e:  # noqa: BLE001
+                        rc, raised = None, e
+            finally:
+                (engine.sync_playwright, engine._BrowserSession,
+                 engine._fetch_one_page, engine._plan_page_urls,
+                 engine._next_url_from_page) = original
+            ok &= check("playwright_scraper: a failed page 1 ends the run "
+                        "as exit 5 with pages 2-3 not attempted and nothing "
+                        "planned from the dead page (rc=%r, fetched=%r, "
+                        "raised=%r)" % (rc, fetched, raised),
+                        raised is None and rc == 5 and fetched == [1]
+                        and not planned)
+
+    # 4. The output directory exists before anything is fetched, and one that
+    #    cannot be made is a usage error before a single request.
+    with tempfile.TemporaryDirectory() as d:
+        from output_writer import ensure_output_dir
+        target = os.path.join(d, "a", "b", "run")
+        ensure_output_dir(target, None)
+        ok &= check("ensure_output_dir creates every missing level",
+                    os.path.isdir(os.path.join(d, "a", "b")))
+        blocker = os.path.join(d, "afile")
+        open(blocker, "w").close()
+        try:
+            ensure_output_dir(os.path.join(blocker, "sub", "run"))
+            raised = None
+        except OSError as e:
+            raised = e
+        ok &= check("ensure_output_dir names a directory it cannot make",
+                    raised is not None and "output directory" in str(raised))
+        for engine in engines:
+            name = engine.__name__
+            args, code = _parse_engine_args(
+                engine, ["--url", search_url, "--out",
+                         os.path.join(blocker, "sub", "run")])
+            touched = []
+            guards = {}
+            for attr in ("sync_playwright", "_Session", "_BrowserSession",
+                         "_AsyncBridge"):
+                if hasattr(engine, attr):
+                    guards[attr] = getattr(engine, attr)
+                    setattr(engine, attr,
+                            lambda *a, **k: touched.append(1) or 1 / 0)
+            try:
+                with redirect_stderr(io.StringIO()):
+                    rc = engine.scrape(args)
+            except ZeroDivisionError:
+                rc = "driver touched"
+            finally:
+                for attr, value in guards.items():
+                    setattr(engine, attr, value)
+            ok &= check("%s: an --out directory that cannot be created is "
+                        "exit 2 before any driver is started (rc=%r)"
+                        % (name, rc), rc == 2 and not touched)
+
+    # 5. --cdp-endpoint cannot be combined with what the README says it
+    #    refuses, but a proxy that only arrived through .env is just ignored.
+    cdp = "ws://user:pass@cb.example.invalid:9222"
+    for engine in engines:
+        name = engine.__name__
+        base = ["--url", search_url, "--cdp-endpoint", cdp]
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for var in ("RAKUTEN_PROXY", "RAKUTEN_URL", "RAKUTEN_CDP_ENDPOINT"):
+                os.environ.pop(var, None)
+            _, c1 = _parse_engine_args(engine, base + ["--concurrency", "3"])
+            _, c2 = _parse_engine_args(
+                engine, base + ["--proxy", "http://127.0.0.1:9"])
+            a3, c3 = _parse_engine_args(engine, base)
+            os.environ["RAKUTEN_PROXY"] = "http://127.0.0.1:9"
+            a4, c4 = _parse_engine_args(engine, base)
+        ok &= check("%s: --concurrency N or a typed --proxy with "
+                    "--cdp-endpoint is a usage error (exit %r / %r)"
+                    % (name, c1, c2), c1 == 2 and c2 == 2)
+        ok &= check("%s: --cdp-endpoint alone, and with a proxy that only "
+                    "came from the environment, still parses (%r / %r)"
+                    % (name, c3, c4), c3 is None and c4 is None)
+    return ok
+
+
+def test_config_and_ignore_rules():
+    group(".env duplicates, proxy list files, diff advice, gateway host")
+    ok = True
+    from unittest import mock
+    import logging
+
+    # A key set twice: the LAST value wins, as python-dotenv does, and the
+    # warning names the key and never a value.
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, ".env")
+        with open(path, "w") as fh:
+            fh.write("RAKUTEN_PROXY=http://{user}:{password}@placeholder:1\n"
+                     "RAKUTEN_URL=https://a.example/\n"
+                     "RAKUTEN_PROXY=http://user:secret@eu.example:2\n")
+        records = []
+
+        class _Grab(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+        handler = _Grab()
+        log = logging.getLogger("env_config")
+        log.addHandler(handler)
+        try:
+            with mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("RAKUTEN_PROXY", None)
+                os.environ.pop("RAKUTEN_URL", None)
+                env_config.load_env(path)
+                got = os.environ.get("RAKUTEN_PROXY", "")
+                url = os.environ.get("RAKUTEN_URL", "")
+            with mock.patch.dict(os.environ, {"RAKUTEN_PROXY": "http://user:pass@exported:3"},
+                                 clear=False):
+                env_config.load_env(path)
+                kept = os.environ["RAKUTEN_PROXY"]
+        finally:
+            log.removeHandler(handler)
+        ok &= check("a repeated .env key: the last value wins "
+                    "(echo >> .env on a copy of .env.example)",
+                    got.endswith("@eu.example:2") and url == "https://a.example/")
+        ok &= check("an exported variable still beats the file",
+                    kept == "http://user:pass@exported:3")
+        ok &= check("the repeat is reported by NAME, never by value",
+                    any("RAKUTEN_PROXY" in m for m in records)
+                    and not any("secret" in m for m in records))
+
+    # Proxy list files are ignored by kind. `--no-index` so a file already
+    # committed cannot make the guard pass.
+    if os.path.isdir(os.path.join(REPO_ROOT, ".git")):
+        for name in ("exits.txt", "exits_jp.txt", "proxies.txt",
+                     "proxylist.txt", "proxylist2.txt"):
+            r = subprocess.run(["git", "check-ignore", "-q", "--no-index", name],
+                               cwd=REPO_ROOT)
+            ok &= check("%s is git-ignored (a proxy list is a credential "
+                        "file)" % name, r.returncode == 0)
+        r = subprocess.run(["git", "check-ignore", "-q", "--no-index",
+                            ".env.example"], cwd=REPO_ROOT)
+        ok &= check(".env.example is NOT ignored", r.returncode == 1)
+    else:
+        print("  (no .git here: the ignore-rule checks are skipped)")
+
+    # diff_runs: the advice matches the refusal.
+    import diff_runs
+    with tempfile.TemporaryDirectory() as d:
+        paths = {}
+        for tag, mode in (("l", "listing"), ("p", "product")):
+            paths[tag] = os.path.join(d, tag + ".json")
+            with open(paths[tag], "w") as fh:
+                json.dump([{"sku": "s:1", "price": 1, "currency": "JPY"}], fh)
+            with open(os.path.join(d, tag + ".meta.json"), "w") as fh:
+                json.dump({"status": "complete", "mode": mode,
+                           "pages_completed": 1, "pages_requested": 1,
+                           "stop_reason": "completed"}, fh)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            refused = not diff_runs._check_comparable(
+                _ap_namespace(old=paths["l"], new=paths["p"]))
+        text = buf.getvalue()
+        ok &= check("two COMPLETE runs of different modes are refused, and "
+                    "the advice does not say to re-run an incomplete side",
+                    refused and "different modes" in text
+                    and "incomplete side" not in text
+                    and "same mode" in text)
+        with open(os.path.join(d, "l.meta.json"), "w") as fh:
+            json.dump({"status": "partial", "mode": "listing",
+                       "pages_completed": 1, "pages_requested": 3,
+                       "stop_reason": "page_load_timeout"}, fh)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            diff_runs._check_comparable(_ap_namespace(old=paths["l"],
+                                                      new=paths["l"]))
+        ok &= check("a partial run still gets the 're-run the incomplete "
+                    "side' advice", "incomplete side" in buf.getvalue())
+
+    # The proxy examples name a real GATEWAY. Measured 2026-10-29 with a
+    # credential-free CONNECT to :2334: ap, na and eu answer 407; jp, as and
+    # ae resolve to the website's Cloudflare addresses and time out.
+    for rel in ("README.md", ".env.example", "TROUBLESHOOTING.md"):
+        path = os.path.join(REPO_ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        text = open(path, encoding="utf-8").read()
+        ok &= check("%s does not point a proxy at jp/as/ae.proxy.2captcha.com"
+                    % rel,
+                    not re.search(r"@(?:jp|as|ae)\.proxy\.2captcha\.com", text))
+    return ok
+
+
+def _ap_namespace(**kw):
+    import argparse as _ap
+    return _ap.Namespace(**kw)
+
+
 def main() -> int:
     ok = True
     # Checks that could not run because an optional engine library is absent.
@@ -4340,6 +4937,8 @@ def main() -> int:
     ok &= test_x_debug_header_is_redacted()
     ok &= test_scraper_api_waitfor_is_an_object()
     ok &= test_engine_fetch_loop_offline()
+    ok &= test_failure_semantics(skips)
+    ok &= test_config_and_ignore_rules()
 
     print()
     if _failures:

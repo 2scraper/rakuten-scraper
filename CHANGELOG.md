@@ -12,8 +12,73 @@ their output or their bill.
 
 ## [Unreleased]
 
+> **Behaviour change: a page that stays throttled is a failed page.** A page
+> still answering HTTP 503 after the three waits (6, 15, 30 s) used to count
+> as read with no rows: the run reported `status: complete` and exit 0 with
+> page 1 missing and `currency` null on every row. It is now recorded as
+> failed (`stop_reason: throttled`, named in `pages_failed`): exit 6 when
+> other pages produced rows, exit 5 when none did. Under `--concurrency` it
+> no longer stops dispatch as if the listing had ended.
+>
+> **Behaviour change: `--concurrency N` and a typed `--proxy` or
+> `--proxy-file` are refused with `--cdp-endpoint`** (exit 2, with the reason)
+> in all three engines, as the README already said. They used to be ignored
+> with a warning and the run carried on. A `RAKUTEN_PROXY` that only comes
+> from `.env` is still ignored with a warning.
+>
+> **Behaviour change: a repeated key in `.env` — the last one wins.** The
+> built-in reader used the first, `python-dotenv` the last, so the same file
+> read differently depending on whether that package was installed. A warning
+> names the repeated key, never its value.
+
+### Fixed
+
+- **Playwright carried on after page 1 failed.** It planned the next page's
+  URL from a page that never loaded and raised out of a dead proxy's browser
+  (`Execution context was destroyed`): a traceback and exit 1 where every other
+  failure reports exit 5. Pages 2-N were also fetched into a run whose sidecar
+  already said it had stopped. A failed page 1 now ends the run, as in the
+  other two engines.
+- **An exit that accepts the connection and drops it was not replaced.**
+  Chromium reports that as `net::ERR_CONNECTION_CLOSED`, not on the proxy-error
+  list, so the run retried the same exit three times (in milliseconds, logged
+  as "Timeout loading") and ended `partial` with working exits unused. Once the
+  retries on an exit are spent and the pool holds another, the engine rotates,
+  bounded by `--proxy-block-retries`. Load failures now log what the browser
+  said instead of "Timeout".
+- **`--out` into a directory that did not exist lost the whole run** (a
+  traceback after every page had been fetched). The directory is now created
+  before the first request, in all three engines and in the Scraper API
+  client, where the request is paid; one that cannot be created is exit 2.
+- **Selenium reported a proxy's 407 as a block by the site** ("blocked ...
+  Akamai refuses this site", exit 3). Chromium does not raise for it and
+  leaves a blank page; the engine now reads the navigation's own status
+  (`responseStatus`), reports a failed load naming the 407 (exit 5, or a
+  rotation) and says that a credentialled proxy is expected to refuse.
+- **pyppeteer's browser that would not start ended in a traceback and exit 1.**
+  It is now one sentence and exit 5, with `--chromium-path` named. The Apple
+  Silicon case itself was not reproduced (Linux, a browser that exits at once,
+  gave the same error).
+- **A proxy list named `exits.txt` was not git-ignored**, though the README's
+  own example uses that name and the file holds logins. `exits*.txt`,
+  `proxies*.txt`, `proxylist*.txt` and `proxy*.list` are ignored.
+- **The proxy example named a host that cannot work.** `jp.proxy.2captcha.com`
+  resolves to the same Cloudflare addresses as the website and times out; the
+  gateways are `ap`, `na` and `eu`, and the country is the `-region-jp`
+  segment of the login. `.env.example` and the README now say so.
+- **`diff_runs.py` told a reader with two complete runs of different modes to
+  "re-run the incomplete side".** The advice now matches the refusal.
+
 ### Changed
 
+- README: re-measured claims. The two `curl` rows of the access table
+  (919,197 bytes and 42 bytes, 2026-10-29), the `?p=151` redirect target, and
+  the item example, whose was-price is gone because the sale ended. The
+  "identical output on all three engines" claim is narrowed to what was
+  measured: it held on 2026-09-21 and did not on 2026-10-29 (one slot a page
+  differed between Playwright and Selenium). The Scraper API price is no
+  longer stated as a constant, the offline-check count is gone, and
+  `pytest` is documented as living in the `dev` extra.
 - CI only: the canary now runs weekly (Mondays 02:17 UTC) instead of daily, and on a manual dispatch.
 
 ## [0.3.0] — 2026-10-16
