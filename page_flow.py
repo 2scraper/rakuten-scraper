@@ -306,6 +306,73 @@ def solve_budget(spent: int) -> bool:
     return spent < SOLVES_PER_PAGE
 
 
+def failure_stop_reason(*, load_failed: bool, throttled: bool,
+                        blocked_by: Optional[str]) -> str:
+    """The sidecar's `stop_reason` for a page that did not come back usable.
+
+    One place, because each engine used to spell this out three times
+    (page 1, the sequential loop, the concurrent workers) as "a load failure,
+    otherwise blocked" — and a page that stayed throttled after every wait
+    is neither: nothing stood between the run and the content, the site was
+    simply rate-limiting it. Folding it into `blocked_None` would have named
+    no cause at all.
+    """
+    if load_failed:
+        return "page_load_timeout"
+    if throttled:
+        return "throttled"
+    return f"blocked_{blocked_by}"
+
+
+def first_line(exc: BaseException, limit: int = 240) -> str:
+    """One short line of what a driver exception said, for a log.
+
+    The type name when the message is empty. Only the first line: Playwright
+    appends a multi-line call log, and an endpoint can repeat in it.
+    """
+    text = str(exc).strip()
+    line = text.splitlines()[0].strip() if text else ""
+    # "Page.goto: net::ERR_X at https://…" repeats the URL the log line
+    # already carries, and the URL is the longest part of it.
+    line = line.split(" at http", 1)[0]
+    if line.startswith("Message: "):      # Selenium's WebDriverException
+        line = line[len("Message: "):]
+    return (line or type(exc).__name__)[:limit]
+
+
+def cdp_conflicts(args, typed) -> List[str]:
+    """What the caller typed that cannot be combined with `--cdp-endpoint`.
+
+    `typed` is the set of argparse destinations that appeared on the command
+    line (env_config.given_on_command_line). Only what was TYPED is refused:
+    a RAKUTEN_PROXY left in `.env` beside a Scraping Browser run is ignored
+    with a warning, as before, because refusing it would break a setup that
+    switches between the two paths by adding one flag.
+
+    The README promised a refusal for both and the engines only warned and
+    carried on, so a reader who typed `--concurrency 4 --cdp-endpoint …` got
+    one worker and exit 0 while the docs said that combination cannot run.
+    """
+    if not getattr(args, "cdp_endpoint", None):
+        return []
+    problems = []
+    if getattr(args, "concurrency", 1) > 1:
+        problems.append(
+            "--concurrency %d cannot be used with --cdp-endpoint: the "
+            "Scraping Browser API allows one live connection per profile, so "
+            "%d workers would collide on it (profile_locked). Use several "
+            "profiles (pid), one run each." % (args.concurrency,
+                                                args.concurrency))
+    for dest in ("proxy", "proxy_file"):
+        if dest in typed and getattr(args, dest, None):
+            problems.append(
+                "--%s cannot be used with --cdp-endpoint: the remote browser "
+                "already has its own exit, and a second proxy on top would "
+                "contradict it. Choose the exit in the endpoint's login "
+                "(its country- segment) instead." % dest.replace("_", "-"))
+    return problems
+
+
 def throttle_delay_ms(attempt: int) -> int:
     """How long to wait before retrying a throttled page."""
     if attempt < 1:

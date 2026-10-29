@@ -123,16 +123,38 @@ def load_env(path=None, override=False):
     except ImportError:
         pass
 
-    count = 0
+    # Collect the whole file FIRST, last assignment winning, and only then
+    # apply it. Applying line by line made the FIRST of two assignments win:
+    # the first one put the key into os.environ, and the second then looked
+    # like "already set by the caller" and was skipped. python-dotenv (used
+    # above when installed) lets the last one win, so the same `.env` read
+    # differently depending on whether that package happened to be present —
+    # and `echo 'RAKUTEN_PROXY=...' >> .env` on a copy of .env.example, which
+    # already holds a placeholder line for it, was silently ignored.
+    file_values = {}
+    repeated = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         parsed = _parse_line(raw)
         if not parsed:
             continue
         key, value = parsed
+        if key in file_values and file_values[key] != value:
+            repeated.append(key)
+        file_values[key] = value
+
+    count = 0
+    for key, value in file_values.items():
+        # Judged against the environment as the caller left it: nothing in
+        # this loop has written to os.environ before this point.
         if key in os.environ and not override:
             continue
         os.environ[key] = value
         count += 1
+    if repeated:
+        # Names only, never values: a proxy line carries a password.
+        logger.warning("%s sets %s more than once with different values; the "
+                       "LAST one is used. Delete the older line.", path.name,
+                       ", ".join(sorted(set(repeated))))
 
     _loaded_from = str(path)
     logger.debug("Loaded %d value(s) from %s", count, path)
@@ -216,6 +238,16 @@ def _dests_given_on_argv(dests, argv=None):
         if any(a == flag or a.startswith(flag + "=") for a in argv):
             typed.add(dest)
     return typed
+
+
+def given_on_command_line(*dests, argv=None):
+    """The subset of `dests` that was typed as a flag on this command line.
+
+    Public so an engine can tell `--proxy` typed by the caller from a proxy
+    that merely arrived through `.env`; `apply` already makes that
+    distinction for precedence.
+    """
+    return _dests_given_on_argv(set(dests), argv)
 
 
 def apply(args, keys=None, quiet=False):

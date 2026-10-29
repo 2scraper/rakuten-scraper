@@ -274,6 +274,10 @@ def _check_comparable(args) -> bool:
     this is a refusal with a --force escape hatch rather than a hard error.
     """
     problems = []
+    # WHICH kinds of problem were found, because the advice differs and a
+    # single sentence for all of them sent a reader with two complete runs of
+    # different modes to "re-run the incomplete side" — there is none.
+    kinds = set()
     modes = {}
     for label, path in (("--old", args.old), ("--new", args.new)):
         status, meta = _run_status(path)
@@ -289,16 +293,19 @@ def _check_comparable(args) -> bool:
             # it is refused outright rather than answered. Both of this
             # repo's current modes qualify; the check is here so that adding
             # one that does not is caught rather than discovered.
+            kinds.add("mode")
             problems.append(
                 f"{label} ({path}) is a {mode!r} run, which is not one row "
                 f"per sku. This tool diffs one row per sku on price, so there "
                 f"is nothing here it can compare.")
         if status != "complete":
+            kinds.add("incomplete")
             problems.append(
                 f"{label} ({path}) was a {status!r} run — stopped after "
                 f"{meta.get('pages_completed')} of {meta.get('pages_requested')} "
                 f"page(s), reason {meta.get('stop_reason')!r}")
     if len(set(modes.values())) > 1:
+        kinds.add("mode")
         problems.append(
             f"the two runs are different modes ({modes}). A listing row and a "
             f"detail row carry different fields, so `added`/`removed` would "
@@ -330,11 +337,13 @@ def _check_comparable(args) -> bool:
         if len(seen) == 1:
             currencies[label] = seen.pop()
         elif len(seen) > 1:
+            kinds.add("currency")
             problems.append(
                 f"{label} ({path}) holds more than one currency ({sorted(seen)}) "
                 f"— that run was redirected mid-way and its own prices are not "
                 f"comparable with each other, let alone with another run's.")
     if len(set(currencies.values())) > 1:
+        kinds.add("currency")
         problems.append(
             f"the two runs quote different currencies ({currencies}). "
             f"Rakuten Ichiba prices everything in JPY for every visitor — "
@@ -354,10 +363,28 @@ def _check_comparable(args) -> bool:
     print("[!] Refusing to diff these two runs:")
     for line in problems:
         print(f"      {line}")
-    print("    Re-run the incomplete side, or pass --force to compare anyway "
-          "(added/removed will include products that were simply never "
-          "fetched).")
+    for line in _advice(kinds):
+        print(f"    {line}")
     return False
+
+
+def _advice(kinds) -> list:
+    """What to do about each KIND of refusal, and only those that applied."""
+    lines = []
+    if "incomplete" in kinds:
+        lines.append("Re-run the incomplete side, or pass --force to compare "
+                     "anyway (added/removed will include products that were "
+                     "simply never fetched).")
+    if "mode" in kinds:
+        lines.append("Compare two runs of the same mode (listing with "
+                     "listing, product with product). --force would line a "
+                     "listing row up against a detail row field by field, "
+                     "and every difference would be that, not the catalogue.")
+    if "currency" in kinds:
+        lines.append("Re-run so both files carry one currency; prices quoted "
+                     "in different currencies cannot be compared, and "
+                     "--force would report every row as changed.")
+    return lines or ["Pass --force to compare anyway."]
 
 
 def parse_args():
