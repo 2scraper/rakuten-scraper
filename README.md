@@ -677,12 +677,12 @@ prints a green suite and proves nothing.
 
 Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
 
-- [SHEIN scraper](https://github.com/2scraper/shein-scraper) — Search, category and product pages: prices, discounts…
-- [Sleep Number scraper](https://github.com/2scraper/sleepnumber-scraper) — Smart beds and mattresses: per-size prices, ratings
-- [StockX scraper](https://github.com/2scraper/stockx-scraper) — Sneaker listings and products: asks, bids, last sale
-- [TikTok Shop scraper](https://github.com/2scraper/tiktok-shop-scraper) — Products, prices, units sold, sellers
-- [Rosreestr scraper](https://github.com/2scraper/rosreestr-scraper) — Russian property registry: cadastral value, area, rights and…
-- [Skyscanner scraper](https://github.com/2scraper/skyscanner-scraper) — Flight searches: itineraries, prices, airlines and times
+- [SHEIN scraper](https://github.com/2scraper/shein-scraper) — us.shein.com search, category and product pages…
+- [Sleep Number scraper](https://github.com/2scraper/sleepnumber-scraper) — Smart beds, mattresses and bedding from sleepnumber.com
+- [StockX scraper](https://github.com/2scraper/stockx-scraper) — Search results, category listings and product pages
+- [TikTok Shop scraper](https://github.com/2scraper/tiktok-shop-scraper) — TikTok Shop product pages to 39 columns
+- [Tokopedia scraper](https://github.com/2scraper/tokopedia-scraper) — IDR prices, discounts, ratings, sold counts and shops…
+- [Tractor Supply scraper](https://github.com/2scraper/tractorsupply-scraper) — Tractor Supply categories, departments and searches
 
 All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
