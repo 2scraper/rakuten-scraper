@@ -1,4 +1,4 @@
-# rakuten-scraper
+# Rakuten Scraper — Ichiba Products, Prices and Reviews in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/rakuten-scraper?sort=semver)](https://github.com/2scraper/rakuten-scraper/releases)
 [![tests](https://github.com/2scraper/rakuten-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/rakuten-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20pyppeteer%20%7C%20CDP-informational)](#engines)
 [![runs without an account](https://img.shields.io/badge/runs%20without-an%20account-brightgreen)](#do-you-need-any-of-the-paid-products)
+
+**Rakuten scraper** — an open-source (MIT) Python tool that reads Rakuten Ichiba (rakuten.co.jp) keyword searches, genre listings and item pages, and writes products, prices, Rakuten points, shops and review scores to JSON or CSV. It needs no key, no proxy and no account: measured on 2026-09-21 from a datacentre address, a 3-page keyword search returned 135 rows, complete, exit 0. Use it to build a Japanese e-commerce price dataset, or to compare two runs of the same search with the bundled `diff_runs.py`.
 
 Scrapes [Rakuten Ichiba](https://www.rakuten.co.jp) — Japan's largest online
 marketplace — to JSON or CSV: products, prices, Rakuten points, shipping,
@@ -666,6 +668,23 @@ Every check added while building this repo was **controlled** — the code was
 broken deliberately, the suite confirmed red and the expected check confirmed
 to be the one that named it — because a control that silently did not apply
 prints a green suite and proves nothing.
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [SHEIN scraper](https://github.com/2scraper/shein-scraper) — Search, category and product pages: prices, discounts…
+- [Sleep Number scraper](https://github.com/2scraper/sleepnumber-scraper) — Smart beds and mattresses: per-size prices, ratings
+- [StockX scraper](https://github.com/2scraper/stockx-scraper) — Sneaker listings and products: asks, bids, last sale
+- [TikTok Shop scraper](https://github.com/2scraper/tiktok-shop-scraper) — Products, prices, units sold, sellers
+- [Rosreestr scraper](https://github.com/2scraper/rosreestr-scraper) — Russian property registry: cadastral value, area, rights and…
+- [Skyscanner scraper](https://github.com/2scraper/skyscanner-scraper) — Flight searches: itineraries, prices, airlines and times
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Contributing, security, licence
 
