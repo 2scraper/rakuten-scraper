@@ -11,7 +11,10 @@ on:
 
 jobs:
   offline:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: from November 2026 ubuntu-latest is 26.04,
+    # which has no Python 3.9 for setup-python, so the 3.9 floor below could
+    # not be tested there at all. The other jobs stay on ubuntu-latest.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
