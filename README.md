@@ -10,13 +10,75 @@
 
 **Rakuten scraper** — an open-source (MIT) Python tool that reads Rakuten Ichiba (rakuten.co.jp) keyword searches, genre listings and item pages, and writes products, prices, Rakuten points, shops and review scores to JSON or CSV. It needs no key, no proxy and no account: measured on 2026-09-21 from a datacentre address, a 3-page keyword search returned 135 rows, complete, exit 0. Use it to build a Japanese e-commerce price dataset, or to compare two runs of the same search with the bundled `diff_runs.py`.
 
-Scrapes [Rakuten Ichiba](https://www.rakuten.co.jp) — Japan's largest online
+Scrapes [Rakuten Ichiba](https://www.rakuten.co.jp) — Japan's main domestic
 marketplace — to JSON or CSV: products, prices, Rakuten points, shipping,
 shops, review scores and per-variant pricing, with four interchangeable
 browser back ends and one row schema shared with the rest of the
 [2scraper](https://github.com/2scraper) family.
 
+## Example output
+
+Two records cut from [`sample_output.json`](sample_output.json), a real run
+of the keyword search below on 2026-09-21. 13 of the 42 columns are shown
+(titles shortened); every column is listed under
+[What comes out](#what-comes-out).
+
+```json
+[
+  {
+    "url": "https://item.rakuten.co.jp/ajinomoto/r4901111371248/",
+    "sku": "ajinomoto:r4901111371248",
+    "title": "【9/24まで P10倍！】味の素AGF ブレンディ スティックブラック100本…",
+    "price": 2447.0,
+    "currency": "JPY",
+    "points": 220,
+    "point_rate": 10,
+    "rating": 4.76,
+    "review_count": 475,
+    "shop_name": "味の素グループ公式ショップ",
+    "category": "水・ソフトドリンク > コーヒー > インスタントコーヒー",
+    "genre_path": "/0/100316/100356/303017",
+    "scraped_at": "2026-09-21T09:22:22.033307+00:00"
+  },
+  {
+    "url": "https://item.rakuten.co.jp/sawaicoffee-tea/ac-sale-1960/",
+    "sku": "sawaicoffee-tea:ac-sale-1960",
+    "title": "＼先着300円OFFクーポン配布／ 送料無料 コーヒー コーヒー豆 コーヒー粉…",
+    "price": 2788.0,
+    "currency": "JPY",
+    "points": 50,
+    "point_rate": 2,
+    "rating": 4.7,
+    "review_count": 50175,
+    "shop_name": "澤井珈琲Beans&Leaf",
+    "category": "水・ソフトドリンク > コーヒー > コーヒー豆",
+    "genre_path": "/0/100316/100356/201402",
+    "scraped_at": "2026-09-21T09:22:22.033563+00:00"
+  }
+]
+```
+
+`price` is in yen and `points` is what the purchase earns on top of it — see
+the FAQ on [Rakuten points](#what-are-rakuten-points-in-the-output-and-how-do-they-change-the-real-price).
+`genre_path` is Rakuten's genre ids; `category` is the same path in
+Rakuten's own (Japanese) genre names.
+
+## Requirements and access
+
+| | |
+|---|---|
+| Runtime | Python 3.9 or newer (the offline suite runs on 3.9 and 3.13 in CI) |
+| Engine | Playwright with its Chromium (recommended); Selenium or pyppeteer as alternatives, one per virtualenv |
+| Coverage | rakuten.co.jp (Rakuten Ichiba, Japan, prices in JPY): keyword searches, genre listings and item pages. Merchant storefronts and `ranking.rakuten.co.jp` are not read — see [Coverage and limitations](#coverage-and-limitations) |
+| Required services | **Nothing.** No key, no proxy, no account. Measured 2026-11-09 from a datacentre address (see [Verification](#verification)), and first on 2026-09-21 |
+| Optional: a proxy | For long runs. Rakuten answers a client going too fast with HTTP 503, which is a throttle, not a block; raise `--delay` first, then spread the run across exits. See [503 is a throttle, not a block](#503-is-a-throttle-not-a-block) |
+| Optional: 2Captcha Scraping Browser API | Not needed on this site. What it adds: no local browser, a chosen exit country and persistent cookies per profile |
+| Captcha solving | Not needed: no captcha is configured on the routes this scraper reads. See [There is no captcha on this site](#there-is-no-captcha-on-this-site) |
+
+## Quick start
+
 ```bash
+python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt -r requirements-playwright.txt
 playwright install chromium
 
@@ -24,7 +86,166 @@ python3 playwright_scraper.py \
   --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 3
 ```
 
-That is the whole setup. No key, no proxy, no account — see below.
+That is the whole setup. No key, no proxy, no account, no `.env`.
+
+It writes three files to the current directory (choose the prefix with
+`--out`):
+
+* `rakuten_products.json` and `rakuten_products.csv` — one row per product,
+  45 per page;
+* `rakuten_products.meta.json` — the run's status (`complete` or not), stop
+  reason, failed pages and the site's own result cap.
+
+If you are refused (exit 3) or a page stays throttled (exit 5 or 6), first
+remove anything you added to the client's identity — a custom user agent, or
+`--fingerprint` together with `--cdp-endpoint` — then raise `--delay`. See
+[The one thing to know first](#the-one-thing-to-know-first) and
+[Exit codes](#exit-codes).
+
+## Coverage and limitations
+
+What the scraper reads, what it does not, and what the site itself caps. The
+short version: listings and item pages, never storefronts or rankings; at
+most 6,750 results per query; no was-price on listing rows; merchant text
+stays in Japanese.
+
+### Pass a listing or an item, not a shop
+
+Three routes carry products and one looks as though it should:
+
+| URL | Reads |
+|---|---|
+| `search.rakuten.co.jp/search/mall/{keyword}/` | ✅ `--mode listing` |
+| `search.rakuten.co.jp/search/mall/-/{genreId}/` | ✅ `--mode listing` |
+| `www.rakuten.co.jp/category/{genreId}/` | ✅ `--mode listing` |
+| `item.rakuten.co.jp/{shop}/{code}/` | ✅ `--mode product` |
+| `www.rakuten.co.jp/{shopCode}/` | ❌ refused, with the reason |
+| `ranking.rakuten.co.jp/…` | ❌ not implemented |
+
+A **merchant storefront** is refused rather than attempted because its
+`__INITIAL_STATE__.state.data` is *empty* — it carries no product payload at
+all, so reading it would need a second parser written against markup nobody
+has captured. A mode that ships untested is worse than a mode that is absent.
+
+`ranking.rakuten.co.jp` is a different application: no payload, one JSON-LD
+`BreadcrumbList`, 80 product links in hand-rolled markup. It is also the one
+route on this site that cares about the window — 403 to plain HTTP and to
+headless Chromium (3 of 3 each), **200 to headful Chromium** (3 of 3). Not
+unreachable, just not implemented.
+
+### Complete is not exhaustive
+
+Rakuten serves at most **6,750 results per query — 150 pages of 45 —
+however many it matched**, and it states both numbers itself. One measured
+query reported:
+
+```
+numFound: 3,053,682        subset: 6,750        pageSize: 45
+```
+
+So a full 150-page run of that query is genuinely `status: complete` — it
+fetched everything the site will serve — and it is a **0.2% sample**. A
+sidecar that said only "complete" would be lying by omission, so every run
+records `total_results`, `reachable_max`, `page_size`, `capped_by_site` and
+`pages_beyond_cap` beside the status, and the engine logs the percentage.
+
+It also gives `diff_runs.py` a third meaning for `removed`: not delisted, not
+un-fetched, but *outside this run's slice of a capped result set*.
+
+To reach more, narrow the query with the site's own filters — genre, price
+band, shop, tag — and run each slice.
+
+### Traps that look like bugs
+
+* **`rating` and `review_count` null on some rows.** Nobody has reviewed that
+  product. Rakuten writes that as `{score: 0, numReviews: 0}` rather than as
+  a null, on 28 of 405 rows, and a zero written through as a rating drags
+  every average a consumer computes — so both columns are nulled together,
+  keyed on the count.
+* **`original_price` and `discount_pct` null on every listing row.** The
+  listing payload publishes no was-price of any kind: zero occurrences of
+  `doublePrice`, `listPrice`, `referencePrice` or `strike` across 405 rows.
+  The nearest thing it has is `sale`, on 32 of 405, which is a campaign
+  *window* with no prices in it — read as a discount it would invent one. A
+  verified was-price does exist on the detail page, gated on Rakuten's own
+  `doublePrice.referencePriceVerified` flag, which is the outcome of Japan's
+  double-pricing substantiation rule. Verified on 2 of 8 item pages
+  (¥10,398 → ¥5,199, and ¥3,476 → ¥1,738).
+* **`in_stock` true on every row.** The search excludes sold-out products
+  rather than marking them — checked specifically on deep pages (80, 120,
+  149, 150 of a 142,000-hit genre), where stale rows would live: 0 sold out.
+  So a `false` on the listing route is *unproven*; the detail route reads the
+  page's own `availability` microdata, which is the source that can say
+  otherwise.
+* **45 rows from a payload with 52 entries.** Seven were sponsored
+  placements. Rakuten injects paid slots into its own result list; they carry
+  a click-tracking redirect instead of a product URL, so there is nothing to
+  key a row on. The count varies between fetches of the same URL — two
+  engines seconds apart saw 45 and 52 — which is why `position` counts the
+  rows emitted rather than the payload's slots.
+* **`--locale en` does not translate anything you care about.** `?lang=en`
+  comes back with `locale: "en"` in the payload and an English navigation
+  bar, and product names, shop names and tag values are merchant-authored
+  Japanese and come back **byte-identical**. `?lang=zh-tw` and `?lang=ko` are
+  accepted with HTTP 200 and silently fall back to `ja`.
+* **`genre_rank` is not a position in your results.** It is the item's
+  standing in its genre's *ranking* listing, which this run never fetched.
+  Sibling repos in this family use published ranks to prove that cards went
+  missing; that arithmetic does not work here.
+* **A readiness wait that times out costs nothing.** Every column comes out
+  of the payload, which is in the first response with no JavaScript run at
+  all — the same URL fetched by plain HTTP and by a real browser parses to
+  the same 45 rows with the same skus and prices.
+* **Never wait on `networkidle`.** Rakuten's ad and tracking beacons keep
+  firing indefinitely — 46 fetches and 13 pings still going after load — so
+  that wait always runs to its full timeout. All three engines wait for
+  `domcontentloaded`.
+
+More in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Examples
+
+Each command is a complete run once the [Quick start](#quick-start) setup is
+done.
+
+```bash
+# A keyword search, three pages, JSON and CSV
+python3 playwright_scraper.py \
+  --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 3
+
+# A genre listing, by Rakuten's own genre id
+python3 playwright_scraper.py \
+  --url "https://www.rakuten.co.jp/category/100356/" --pages 5 --format csv
+
+# One product: per-variant prices and a variant count (and a was-price while
+# the shop's own sale is verified: see the note under "Measured")
+python3 playwright_scraper.py --mode product \
+  --url "https://item.rakuten.co.jp/sawaicoffee-tea/solandluna/"
+
+# The site's own filters are part of the URL and survive pagination
+python3 playwright_scraper.py \
+  --url "https://search.rakuten.co.jp/search/mall/コーヒー/?min=1000&max=3000" \
+  --pages 3
+
+# Spread a long run across exits (and see the note on 503 below). Put one
+# proxy URL per line in the list; exits*.txt, proxies*.txt and proxylist*.txt
+# are git-ignored, because that file holds logins and passwords.
+python3 playwright_scraper.py \
+  --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 50 \
+  --proxy-file exits.txt --proxy-rotate per-page --delay 4
+```
+
+## Verification
+
+Checked on **2026-11-09** at commit `ab9babd` (the code in this README's
+revision is unchanged from it):
+
+| Check | Conditions | Result |
+|---|---|---|
+| Quick start, as written above | a fresh virtualenv, Python 3.13, `requirements.txt` + `requirements-playwright.txt`, headless Chromium, no `.env`, one Hetzner datacentre address | **135 rows**, 135 unique `sku`, `status: complete`, exit 0; `price` and `currency` (`JPY`) on 135 of 135 |
+| Site cap reported | the same run | `total_results` 3,164,855, `reachable_max` 6,750 — a complete run is a sample, as described [above](#complete-is-not-exhaustive) |
+| Offline suite | `python3 smoke_test.py` and `python3 .github/ci_checks.py --all`, core requirements only | passed (engine groups skipped, as designed, without their libraries) |
+| Canary (daily, weekly since 2026-10-16) | a 3-page genre listing from a GitHub runner with no secrets | green on every run from 2026-10-01 to 2026-11-09, the last one at `ab9babd` |
 
 ## The one thing to know first
 
@@ -102,59 +323,6 @@ Chrome.app/Contents/MacOS/Google Chrome"`. Without it the run now ends with
 that advice and exit 5 rather than a traceback; the Apple Silicon case itself
 was reported by an audit and was not reproduced here (Linux, a browser that
 exits at once, gave the same error and the same handling).
-
-## Usage
-
-```bash
-# A keyword search, three pages, JSON and CSV
-python3 playwright_scraper.py \
-  --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 3
-
-# A genre listing, by Rakuten's own genre id
-python3 playwright_scraper.py \
-  --url "https://www.rakuten.co.jp/category/100356/" --pages 5 --format csv
-
-# One product: per-variant prices and a variant count (and a was-price while
-# the shop's own sale is verified: see the note under "Measured")
-python3 playwright_scraper.py --mode product \
-  --url "https://item.rakuten.co.jp/sawaicoffee-tea/solandluna/"
-
-# The site's own filters are part of the URL and survive pagination
-python3 playwright_scraper.py \
-  --url "https://search.rakuten.co.jp/search/mall/コーヒー/?min=1000&max=3000" \
-  --pages 3
-
-# Spread a long run across exits (and see the note on 503 below). Put one
-# proxy URL per line in the list; exits*.txt, proxies*.txt and proxylist*.txt
-# are git-ignored, because that file holds logins and passwords.
-python3 playwright_scraper.py \
-  --url "https://search.rakuten.co.jp/search/mall/コーヒー/" --pages 50 \
-  --proxy-file exits.txt --proxy-rotate per-page --delay 4
-```
-
-### Pass a listing or an item, not a shop
-
-Three routes carry products and one looks as though it should:
-
-| URL | Reads |
-|---|---|
-| `search.rakuten.co.jp/search/mall/{keyword}/` | ✅ `--mode listing` |
-| `search.rakuten.co.jp/search/mall/-/{genreId}/` | ✅ `--mode listing` |
-| `www.rakuten.co.jp/category/{genreId}/` | ✅ `--mode listing` |
-| `item.rakuten.co.jp/{shop}/{code}/` | ✅ `--mode product` |
-| `www.rakuten.co.jp/{shopCode}/` | ❌ refused, with the reason |
-| `ranking.rakuten.co.jp/…` | ❌ not implemented |
-
-A **merchant storefront** is refused rather than attempted because its
-`__INITIAL_STATE__.state.data` is *empty* — it carries no product payload at
-all, so reading it would need a second parser written against markup nobody
-has captured. A mode that ships untested is worse than a mode that is absent.
-
-`ranking.rakuten.co.jp` is a different application: no payload, one JSON-LD
-`BreadcrumbList`, 80 product links in hand-rolled markup. It is also the one
-route on this site that cares about the window — 403 to plain HTTP and to
-headless Chromium (3 of 3 each), **200 to headful Chromium** (3 of 3). Not
-unreachable, just not implemented.
 
 ## What comes out
 
@@ -342,27 +510,8 @@ cross-host case: a genre landing page advertises
 `search.rakuten.co.jp/search/mall/-/{genreId}/?p=2`, which is exactly what
 this scraper builds for it.
 
-### Complete is not exhaustive
-
-Rakuten serves at most **6,750 results per query — 150 pages of 45 —
-however many it matched**, and it states both numbers itself. One measured
-query reported:
-
-```
-numFound: 3,053,682        subset: 6,750        pageSize: 45
-```
-
-So a full 150-page run of that query is genuinely `status: complete` — it
-fetched everything the site will serve — and it is a **0.2% sample**. A
-sidecar that said only "complete" would be lying by omission, so every run
-records `total_results`, `reachable_max`, `page_size`, `capped_by_site` and
-`pages_beyond_cap` beside the status, and the engine logs the percentage.
-
-It also gives `diff_runs.py` a third meaning for `removed`: not delisted, not
-un-fetched, but *outside this run's slice of a capped result set*.
-
-To reach more, narrow the query with the site's own filters — genre, price
-band, shop, tag — and run each slice.
+The site's own result cap, and what a `complete` run therefore means, is
+described under [Complete is not exhaustive](#complete-is-not-exhaustive).
 
 ## Engines
 
@@ -564,62 +713,14 @@ a column is empty, it says whether that is the site or the parser.
 |---|---|---|
 | `price` | 405/405 | every listing names a price |
 | `points` | 405/405 | 27 of them are 0, which is a real zero |
-| `rating` / `review_count` | 377/405 | the other 28 are unreviewed — see below |
+| `rating` / `review_count` | 377/405 | the other 28 are unreviewed — see [Traps](#traps-that-look-like-bugs) |
 | `brand` | 240/405 (59%) | from Rakuten's own ブランド tag |
 | `shipping_fee == 0` | 317/405 (78%) | free shipping is the common case |
 | `price_max` | 95/405 | items whose variants differ in price |
 | `subscription_price` | 54/405 | 定期購入, always below `price` |
 | `genre_rank` | 20/405 | the item's rank in its genre ranking |
-| `original_price` | **0/405** | the listing payload publishes none — see below |
+| `original_price` | **0/405** | the listing payload publishes none — see [Traps](#traps-that-look-like-bugs) |
 | `in_stock == true` | **405/405** | the search excludes sold-out items |
-
-## Traps that look like bugs
-
-* **`rating` and `review_count` null on some rows.** Nobody has reviewed that
-  product. Rakuten writes that as `{score: 0, numReviews: 0}` rather than as
-  a null, on 28 of 405 rows, and a zero written through as a rating drags
-  every average a consumer computes — so both columns are nulled together,
-  keyed on the count.
-* **`original_price` and `discount_pct` null on every listing row.** The
-  listing payload publishes no was-price of any kind: zero occurrences of
-  `doublePrice`, `listPrice`, `referencePrice` or `strike` across 405 rows.
-  The nearest thing it has is `sale`, on 32 of 405, which is a campaign
-  *window* with no prices in it — read as a discount it would invent one. A
-  verified was-price does exist on the detail page, gated on Rakuten's own
-  `doublePrice.referencePriceVerified` flag, which is the outcome of Japan's
-  double-pricing substantiation rule. Verified on 2 of 8 item pages
-  (¥10,398 → ¥5,199, and ¥3,476 → ¥1,738).
-* **`in_stock` true on every row.** The search excludes sold-out products
-  rather than marking them — checked specifically on deep pages (80, 120,
-  149, 150 of a 142,000-hit genre), where stale rows would live: 0 sold out.
-  So a `false` on the listing route is *unproven*; the detail route reads the
-  page's own `availability` microdata, which is the source that can say
-  otherwise.
-* **45 rows from a payload with 52 entries.** Seven were sponsored
-  placements. Rakuten injects paid slots into its own result list; they carry
-  a click-tracking redirect instead of a product URL, so there is nothing to
-  key a row on. The count varies between fetches of the same URL — two
-  engines seconds apart saw 45 and 52 — which is why `position` counts the
-  rows emitted rather than the payload's slots.
-* **`--locale en` does not translate anything you care about.** `?lang=en`
-  comes back with `locale: "en"` in the payload and an English navigation
-  bar, and product names, shop names and tag values are merchant-authored
-  Japanese and come back **byte-identical**. `?lang=zh-tw` and `?lang=ko` are
-  accepted with HTTP 200 and silently fall back to `ja`.
-* **`genre_rank` is not a position in your results.** It is the item's
-  standing in its genre's *ranking* listing, which this run never fetched.
-  Sibling repos in this family use published ranks to prove that cards went
-  missing; that arithmetic does not work here.
-* **A readiness wait that times out costs nothing.** Every column comes out
-  of the payload, which is in the first response with no JavaScript run at
-  all — the same URL fetched by plain HTTP and by a real browser parses to
-  the same 45 rows with the same skus and prices.
-* **Never wait on `networkidle`.** Rakuten's ad and tracking beacons keep
-  firing indefinitely — 46 fetches and 13 pings still going after load — so
-  that wait always runs to its full timeout. All three engines wait for
-  `domcontentloaded`.
-
-More in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Diffing two runs
 
@@ -672,6 +773,59 @@ prints a green suite and proves nothing.
 ## Guides
 
 - [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## FAQ
+
+### Does Rakuten have a public API, and when is the scraper the better choice?
+
+This repository reads the public pages; it does not use or require Rakuten's
+developer API. It reads the same JSON payload the search and item pages are
+built from, so its rows carry what a shopper sees on those pages, Rakuten
+points and shop names included, with sponsored placements left out.
+
+### Do I need a proxy, a 2Captcha key or an account?
+
+No. On 2026-11-09 the Quick start command returned 135 rows, complete, exit 0,
+from a datacentre address with no key, no proxy and no account (see
+[Verification](#verification)). Rakuten's HTTP 503 is a throttle for a client
+going too fast, not a block: the scraper waits and retries at the same exit.
+A proxy helps only for long runs, to spread the traffic across exits; raise
+`--delay` first.
+
+### Does it work with Japanese search terms, and is the output in Japanese?
+
+Yes. Put the Japanese keyword straight into the search URL, as in the Quick
+start (`/search/mall/コーヒー/`). `title`, `brand`, `shop_name`, `category`
+and `tags` come back in Japanese, as the merchants wrote them; `genre_path` is
+numeric genre ids. `--locale en` (`?lang=en`) only translates the site's
+navigation: product and shop names stay byte-identical.
+
+### What are Rakuten points in the output, and how do they change the real price?
+
+`points` is the number of Rakuten points a purchase earns, and `point_rate`
+is the item's point multiplier when the listing states one (null when it
+does not). A 10× point campaign is effectively a 10% discount that never
+touches the `price` column — in the example above, 220 points on a ¥2,447
+item at `point_rate` 10. A monitor watching `price` alone misses it, which is
+why `diff_runs.py` compares `points` and `point_rate` as well.
+
+### Is it legal to scrape rakuten.co.jp?
+
+This is not legal advice. The scraper reads public pages only: it does not
+log in, touch a cart or attempt to defeat a challenge. Whether a particular
+use is allowed depends on your jurisdiction, Rakuten's terms of use,
+copyright in product texts and images, and data-protection law, which differ
+between countries. Keep the request rate low — the scraper waits between
+pages and backs off on a 503 — and do not collect personal data without a
+lawful basis.
+
+### How often does it break when the site changes?
+
+A canary runs a real three-page scrape every Monday from a GitHub runner
+with no secrets, and a blocked, partial or empty run turns the canary badge
+at the top of this page red. Every canary run from 2026-10-01 to 2026-11-09
+was green; four of the first ten, in late September 2026, were not. Changes
+made because the site changed are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Related scrapers
 
