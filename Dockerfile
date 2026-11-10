@@ -13,6 +13,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# The playwright CLI runs on its bundled node, which since playwright 1.65
+# links libatomic.so.1; the slim image lacks it, and `playwright install`
+# itself dies with exit 127 before --with-deps can add anything.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt requirements-playwright.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-playwright.txt \
     # Playwright's own apt-get for Chromium's shared-library dependencies —
