@@ -33,6 +33,10 @@ their output or their bill.
 
 ### Fixed
 
+- **The Docker image failed to build with playwright 1.65.** Its bundled
+  node needs `libatomic.so.1`, which `python:3.12-slim` lacks, so
+  `playwright install` exited 127 before it could install anything. The
+  Dockerfile now installs `libatomic1` first.
 - **Playwright carried on after page 1 failed.** It planned the next page's
   URL from a page that never loaded and raised out of a dead proxy's browser
   (`Execution context was destroyed`): a traceback and exit 1 where every other
