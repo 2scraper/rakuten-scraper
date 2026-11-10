@@ -772,6 +772,7 @@ prints a green suite and proves nothing.
 
 ## Guides
 
+- [How to scrape Rakuten: step-by-step guide](https://2captcha.com/h/how-to-scrape-rakuten)
 - [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
 
 ## FAQ
