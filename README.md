@@ -58,6 +58,9 @@ of the keyword search below on 2026-09-21. 13 of the 42 columns are shown
 ]
 ```
 
+Full sample: [`sample_output.json`](sample_output.json) · 9 rows, collected
+2026-09-21 (listing mode, the keyword search from the Quick start).
+
 `price` is in yen and `points` is what the purchase earns on top of it — see
 the FAQ on [Rakuten points](#what-are-rakuten-points-in-the-output-and-how-do-they-change-the-real-price).
 `genre_path` is Rakuten's genre ids; `category` is the same path in
@@ -70,7 +73,8 @@ Rakuten's own (Japanese) genre names.
 | Runtime | Python 3.9 or newer (the offline suite runs on 3.9 and 3.13 in CI) |
 | Engine | Playwright with its Chromium (recommended); Selenium or pyppeteer as alternatives, one per virtualenv |
 | Coverage | rakuten.co.jp (Rakuten Ichiba, Japan, prices in JPY): keyword searches, genre listings and item pages. Merchant storefronts and `ranking.rakuten.co.jp` are not read — see [Coverage and limitations](#coverage-and-limitations) |
-| Required services | **Nothing.** No key, no proxy, no account. Measured 2026-11-09 from a datacentre address (see [Verification](#verification)), and first on 2026-09-21 |
+| Required services | **Nothing.** No key, no proxy, no account |
+| Measured | 2026-11-17 at commit `fe0d03d`, from a datacentre address with no key, proxy or account (see [Verification](#verification)); first on 2026-09-21 |
 | Optional: a proxy | For long runs. Rakuten answers a client going too fast with HTTP 503, which is a throttle, not a block; raise `--delay` first, then spread the run across exits. See [503 is a throttle, not a block](#503-is-a-throttle-not-a-block) |
 | Optional: 2Captcha Scraping Browser API | Not needed on this site. What it adds: no local browser, a chosen exit country and persistent cookies per profile |
 | Captcha solving | Not needed: no captcha is configured on the routes this scraper reads. See [There is no captcha on this site](#there-is-no-captcha-on-this-site) |
@@ -96,11 +100,20 @@ It writes three files to the current directory (choose the prefix with
 * `rakuten_products.meta.json` — the run's status (`complete` or not), stop
   reason, failed pages and the site's own result cap.
 
-If you are refused (exit 3) or a page stays throttled (exit 5 or 6), first
-remove anything you added to the client's identity — a custom user agent, or
-`--fingerprint` together with `--cdp-endpoint` — then raise `--delay`. See
-[The one thing to know first](#the-one-thing-to-know-first) and
-[Exit codes](#exit-codes).
+If the run does not end with exit 0:
+
+* **exit 3, refused** — remove anything you added to the client's identity (a
+  custom user agent, or `--fingerprint` together with `--cdp-endpoint`); see
+  [The one thing to know first](#the-one-thing-to-know-first).
+* **exit 4, zero products** — the page was served but matched nothing; check
+  the keyword and any filters in the URL. Nothing is written over earlier
+  output.
+* **exit 5 or 6, throttled or partial** — raise `--delay`; `pages_failed` in
+  the `.meta.json` names the pages that were not read. See
+  [503 is a throttle, not a block](#503-is-a-throttle-not-a-block).
+
+All exit codes: [Exit codes](#exit-codes). Setup, `.env` and exit codes for
+the whole family: [How to run the 2scraper scrapers](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers).
 
 ## Coverage and limitations
 
@@ -205,6 +218,10 @@ More in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Examples
 
+Step by step:
+[How to scrape Rakuten](https://2captcha.com/h/how-to-scrape-rakuten) ·
+the [Rakuten scraper page on 2scraper.com](https://2scraper.com/scrapers/rakuten-scraper/).
+
 Each command is a complete run once the [Quick start](#quick-start) setup is
 done.
 
@@ -237,15 +254,17 @@ python3 playwright_scraper.py \
 
 ## Verification
 
-Checked on **2026-11-09** at commit `ab9babd` (the code in this README's
-revision is unchanged from it):
+Last checked on **2026-11-17** at commit `fe0d03d`. The scraper's code is
+unchanged since `ab9babd`, where the full three-page Quick start was run on
+2026-11-09.
 
-| Check | Conditions | Result |
-|---|---|---|
-| Quick start, as written above | a fresh virtualenv, Python 3.13, `requirements.txt` + `requirements-playwright.txt`, headless Chromium, no `.env`, one Hetzner datacentre address | **135 rows**, 135 unique `sku`, `status: complete`, exit 0; `price` and `currency` (`JPY`) on 135 of 135 |
-| Site cap reported | the same run | `total_results` 3,164,855, `reachable_max` 6,750 — a complete run is a sample, as described [above](#complete-is-not-exhaustive) |
-| Offline suite | `python3 smoke_test.py` and `python3 .github/ci_checks.py --all`, core requirements only | passed (engine groups skipped, as designed, without their libraries) |
-| Canary (daily, weekly since 2026-10-16) | a 3-page genre listing from a GitHub runner with no secrets | green on every run from 2026-10-01 to 2026-11-09, the last one at `ab9babd` |
+| Date, commit | Check | Conditions | Result |
+|---|---|---|---|
+| 2026-11-17, `fe0d03d` | Quick start command with `--pages 1` (one page of 45; kept short on purpose) | a fresh virtualenv, Python 3.13, `requirements.txt` + `requirements-playwright.txt` (Playwright 1.65.2), headless Chromium, no `.env`, one datacentre address | **45 rows**, 45 unique `sku`, `status: complete`, exit 0; `price` and `currency` (`JPY`) on 45 of 45; same 42 columns in the same order as `sample_output.json` |
+| 2026-11-17, `fe0d03d` | Site cap reported | the same run | `total_results` 3,233,987, `reachable_max` 6,750 — a complete run is a sample, as described [above](#complete-is-not-exhaustive) |
+| 2026-11-09, `ab9babd` | Quick start, as written above (`--pages 3`) | a fresh virtualenv, Python 3.13, `requirements.txt` + `requirements-playwright.txt`, headless Chromium, no `.env`, one Hetzner datacentre address | **135 rows**, 135 unique `sku`, `status: complete`, exit 0; `price` and `currency` (`JPY`) on 135 of 135; `total_results` 3,164,855 |
+| 2026-11-17, `fe0d03d` | Offline suite | `python3 smoke_test.py` and `python3 .github/ci_checks.py --all`, core requirements only | passed (engine groups skipped, as designed, without their libraries) |
+| 2026-10-01 to 2026-11-16 | [Canary](https://github.com/2scraper/rakuten-scraper/actions/workflows/canary.yml) (daily, weekly since 2026-10-16) | a 3-page genre listing from a GitHub runner with no secrets | green on every run, the last one on 2026-11-16 at `fe0d03d` |
 
 ## The one thing to know first
 
@@ -773,11 +792,12 @@ prints a green suite and proves nothing.
 ## Guides
 
 - [How to scrape Rakuten: step-by-step guide](https://2captcha.com/h/how-to-scrape-rakuten)
+- [Rakuten scraper on 2scraper.com](https://2scraper.com/scrapers/rakuten-scraper/) — what it collects, requirements and related scrapers on one page.
 - [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
 
 ## FAQ
 
-### Does Rakuten have a public API, and when is the scraper the better choice?
+### Does Rakuten have a public API?
 
 This repository reads the public pages; it does not use or require Rakuten's
 developer API. It reads the same JSON payload the search and item pages are
@@ -792,6 +812,34 @@ from a datacentre address with no key, no proxy and no account (see
 going too fast, not a block: the scraper waits and retries at the same exit.
 A proxy helps only for long runs, to spread the traffic across exits; raise
 `--delay` first.
+
+### Why does Rakuten block headless browsers or datacentre IPs?
+
+On the routes this scraper reads, it does not. Headless Chromium from a
+datacentre address is how the Quick start was run (see
+[Verification](#verification)). What Rakuten's Akamai front refuses is a
+client whose claimed identity disagrees with its TLS fingerprint, such as an
+HTTP client sending a Chrome user agent, and that refusal can arrive as a
+short HTTP 200 page rather than an error status — see
+[The one thing to know first](#the-one-thing-to-know-first). A 503 is a
+throttle for going too fast: the scraper waits and retries.
+
+### How do I run the Rakuten scraper on a server?
+
+Exactly as in the [Quick start](#quick-start): headless is the default, so no
+display is needed, and no key, proxy or `.env` is required. The checks in
+[Verification](#verification) ran that way on a Linux datacentre server, and
+the canary runs it weekly on a GitHub runner with no secrets. For a scheduled
+job, branch on the exit code and the `status` in `<out>.meta.json` rather
+than on whether a file exists.
+
+### What fields does the scraper return?
+
+42 columns per product, in the same order in JSON and CSV, all listed under
+[What comes out](#what-comes-out): the family's shared 18 (`url`, `sku`,
+`title`, `price`, `currency`, `rating`, `review_count`, `in_stock`,
+`category`, …) followed by Rakuten's own — `points` and `point_rate`,
+shipping, the shop, genre ids and per-variant prices.
 
 ### Does it work with Japanese search terms, and is the output in Japanese?
 
@@ -820,11 +868,11 @@ between countries. Keep the request rate low — the scraper waits between
 pages and backs off on a 503 — and do not collect personal data without a
 lawful basis.
 
-### How often does it break when the site changes?
+### How often does it break when rakuten.co.jp changes?
 
 A canary runs a real three-page scrape every Monday from a GitHub runner
 with no secrets, and a blocked, partial or empty run turns the canary badge
-at the top of this page red. Every canary run from 2026-10-01 to 2026-11-09
+at the top of this page red. Every canary run from 2026-10-01 to 2026-11-16
 was green; four of the first ten, in late September 2026, were not. Changes
 made because the site changed are recorded in [CHANGELOG.md](CHANGELOG.md).
 
