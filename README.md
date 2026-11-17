@@ -62,7 +62,7 @@ Full sample: [`sample_output.json`](sample_output.json) · 9 rows, collected
 2026-09-21 (listing mode, the keyword search from the Quick start).
 
 `price` is in yen and `points` is what the purchase earns on top of it — see
-the FAQ on [the fields it returns](#what-fields-does-the-scraper-return).
+the FAQ on [Rakuten points](#what-are-rakuten-points-in-the-output-and-how-do-they-change-the-real-price).
 `genre_path` is Rakuten's genre ids; `category` is the same path in
 Rakuten's own (Japanese) genre names.
 
@@ -813,7 +813,7 @@ going too fast, not a block: the scraper waits and retries at the same exit.
 A proxy helps only for long runs, to spread the traffic across exits; raise
 `--delay` first.
 
-### Why does Rakuten block headless browsers or datacenter IPs?
+### Why does Rakuten block headless browsers or datacentre IPs?
 
 On the routes this scraper reads, it does not. Headless Chromium from a
 datacentre address is how the Quick start was run (see
@@ -839,14 +839,24 @@ than on whether a file exists.
 [What comes out](#what-comes-out): the family's shared 18 (`url`, `sku`,
 `title`, `price`, `currency`, `rating`, `review_count`, `in_stock`,
 `category`, …) followed by Rakuten's own — `points` and `point_rate`,
-shipping, the shop, genre ids and per-variant prices. `points` is what a
-purchase earns on top of `price`: a 10× point campaign is effectively a 10%
-discount that never touches `price` (220 points on a ¥2,447 item at
-`point_rate` 10 in the example above), which is why `diff_runs.py` compares
-both. Japanese keywords go straight into the search URL
-(`/search/mall/コーヒー/`); `title`, `brand`, `shop_name`, `category` and
-`tags` come back in Japanese as the merchants wrote them, and `--locale en`
-translates only the site's navigation.
+shipping, the shop, genre ids and per-variant prices.
+
+### Does it work with Japanese search terms, and is the output in Japanese?
+
+Yes. Put the Japanese keyword straight into the search URL, as in the Quick
+start (`/search/mall/コーヒー/`). `title`, `brand`, `shop_name`, `category`
+and `tags` come back in Japanese, as the merchants wrote them; `genre_path` is
+numeric genre ids. `--locale en` (`?lang=en`) only translates the site's
+navigation: product and shop names stay byte-identical.
+
+### What are Rakuten points in the output, and how do they change the real price?
+
+`points` is the number of Rakuten points a purchase earns, and `point_rate`
+is the item's point multiplier when the listing states one (null when it
+does not). A 10× point campaign is effectively a 10% discount that never
+touches the `price` column — in the example above, 220 points on a ¥2,447
+item at `point_rate` 10. A monitor watching `price` alone misses it, which is
+why `diff_runs.py` compares `points` and `point_rate` as well.
 
 ### Is it legal to scrape rakuten.co.jp?
 
